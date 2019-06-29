@@ -21,7 +21,7 @@ if [[ ${ver[2]} != *"-"* ]]; then
   FULLRELEASE=1
 fi
 
-dbtags=( mysql mongodb rethinkdb alldbs )
+dbtags=( mysql )
 
 # Build an images for various DB backends
 for dbtag in "${dbtags[@]}"
@@ -41,7 +41,7 @@ do
     buildtags="${buildtags} --tag ${name}:latest --tag ${name}:${ver[0]}.${ver[1]}"
   fi
   docker rmi ${rmitags}
-  docker build --build-arg VERSION=$tag --build-arg TARGET_DB=${dbtag} ${buildtags} docker/tinode
+  docker build --build-arg VERSION=$tag --build-arg TARGET_DB=${dbtag} ${buildtags} . -f docker/tinode/Dockerfile
 done
 
 # Build chatbot image

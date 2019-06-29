@@ -10,6 +10,22 @@
 #	tinode-server
 
 FROM alpine:3.12
+# FROM golang:1.11.3-alpine3.8 as build
+
+## Build-time options.
+
+## Database selector. Builds for RethinkDB by default.
+## Alternatively use `--build-arg TARGET_DB=mysql` to build for MySQL.
+# ARG TARGET_DB=rethinkdb
+# ENV TARGET_DB=$TARGET_DB
+
+## Copy the local package files to the container’s workspace.
+# COPY . /go/src/github.com/jetri/chat
+
+# RUN cd /go/src/github.com/jetri/chat/server && go build -tags $TARGET_DB -o tinode
+# RUN cd /go/src/github.com/jetri/chat/tinode-db && go build -tags $TARGET_DB -o init-db
+
+# FROM alpine:latest
 
 ARG VERSION=0.16
 ENV VERSION=$VERSION
@@ -124,10 +140,22 @@ COPY entrypoint.sh .
 
 # Get the desired Tinode build.
 ADD https://github.com/tinode/chat/releases/download/v$BINVERS/tinode-$TARGET_DB.linux-amd64.tar.gz .
+# ADD https://github.com/tinode/chat/releases/download/v$VERSION/tinode-$TARGET_DB.linux-amd64.tar.gz .
 
 # Unpack the Tinode archive.
-RUN tar -xzf tinode-$TARGET_DB.linux-amd64.tar.gz \
-	&& rm tinode-$TARGET_DB.linux-amd64.tar.gz
+# RUN tar -xzf tinode-$TARGET_DB.linux-amd64.tar.gz \
+# 	&& rm tinode-$TARGET_DB.linux-amd64.tar.gz
+
+COPY --from=build /go/src/github.com/jetri/chat/server/tinode /opt/tinode/
+
+## Copy config template to the container.
+# COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/config.template .
+# COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/entrypoint.sh .
+# COPY --from=build /go/src/github.com/jetri/chat/server/templ /opt/tinode/templ
+# COPY --from=build /go/src/github.com/jetri/chat/tinode-db .
+# COPY --from=build /go/src/github.com/jetri/chat/static /opt/tinode/static
+
+## RUN pwd && ls -lh
 
 # Create directory for chatbot data.
 RUN mkdir /botdata
