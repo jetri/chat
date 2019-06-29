@@ -25,8 +25,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 )
 
 func listenAndServe(addr string, mux *http.ServeMux, tlfConf *tls.Config, stop <-chan bool) error {

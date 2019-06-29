@@ -4,10 +4,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/push"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/push"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 )
 
 // Process request for a new account.

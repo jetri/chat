@@ -2,9 +2,9 @@
 package tel
 
 import (
-	"github.com/nyaruka/phonenumbers"
-	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
+    "github.com/nyaruka/phonenumbers"
+    "github.com/jetri/chat/server/store"
+	t "github.com/jetri/chat/server/store/types"
 )
 
 const validatorName = "tel"

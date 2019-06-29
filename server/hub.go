@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+    "github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 )
 
 // Request to hub to subscribe session to topic
