@@ -1,0 +1,86 @@
+{
+  "name": "tinode-webapp",
+  "description": "Tinode messenger for the web",
+  "version": "0.15.14",
+  "devDependencies": {
+    "@babel/core": "^7.3.4",
+    "@babel/preset-env": "^7.3.4",
+    "@babel/preset-react": "^7.0.0",
+    "babel-loader": "^8.0.5",
+    "babel-plugin-react-intl": "^3.0.1",
+    "browserslist": "^4.4.1",
+    "cssnano": "^4.1.10",
+    "postcss": "^7.0.6",
+    "uglifyjs-webpack-plugin": "^2.1.2",
+    "webpack": "^4.29.6",
+    "webpack-cli": "^3.2.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinode/example-react-js.git"
+  },
+  "scripts": {
+    "build": "npm run vers && npm run build:prod && npm run build:dev && npm run build:css && npm run build:i18n",
+    "build:css": "postcss css/base.css > css/base.min.css",
+    "build:dev": "webpack --mode development --output ./umd/index.dev.js",
+    "build:prod": "webpack --mode production --output ./umd/index.prod.js",
+    "build:i18n": "node scripts/flatten-messages.js",
+    "vers": "node scripts/gen-version.js"
+  },
+  "files": [
+    "src/index.js",
+    "src/config.js",
+    "src/views/*.jsx",
+    "src/widgets/*.jsx",
+    "src/lib/*.js",
+    "src/i18n/*.json",
+    "umd/index.prod.js",
+    "umd/index.prod.js.map",
+    "umd/index.dev.js",
+    "umd/index.dev.js.map",
+    "audio/msg.mp3",
+    "css/base.css",
+    "css/base.min.css",
+    "img/ignasi_pattern_s.png",
+    "img/logo.svg",
+    "img/logo32x32.png",
+    "img/logo32x32a.png",
+    "img/logo96.png",
+    "img/logo192.png",
+    "img/badge96.png",
+    "img/broken_image.png",
+    "index-dev.html",
+    "index.html",
+    "manifest.json",
+    "service-worker.js",
+    "firebase-init.js",
+    "web-desktop-2.png",
+    "web-mob-chat-1.png",
+    "web-mob-contacts-1.png",
+    "web-mob-info-1.png",
+    "web-mob-new-chat-1.png"
+  ],
+  "keywords": [
+    "chat",
+    "instant-messenger",
+    "message",
+    "messenger",
+    "react",
+    "web"
+  ],
+  "main": "umd/index.prod.js",
+  "bugs": {
+    "url": "https://github.com/tinode/example-react-js/issues"
+  },
+  "homepage": "https://github.com/tinode/chat",
+  "email": "info@tinode.co",
+  "author": "Tinode Authors <info@tinode.co>",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "firebase": "^5.8.6",
+    "react": "^16.8.4",
+    "react-dom": "^16.8.4",
+    "react-intl": "^2.8.0",
+    "tinode-sdk": "^0.15.14"
+  }
+}

@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/push"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/push"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 )
 
 // Topic is an isolated communication channel

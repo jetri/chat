@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 )
 
 func largeFileServe(wrt http.ResponseWriter, req *http.Request) {

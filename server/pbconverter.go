@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/tinode/chat/pbx"
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/pbx"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/store/types"
 )
 
 func pbServCtrlSerialize(ctrl *MsgServerCtrl) *pbx.ServerMsg_Ctrl {

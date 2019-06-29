@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/tinode/chat/pbx"
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/pbx"
+	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 
 	"golang.org/x/text/language"
 )

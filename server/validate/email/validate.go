@@ -20,10 +20,10 @@ import (
 	textt "text/template"
 	"time"
 
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
-	i18n "golang.org/x/text/language"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/store"
+	t "github.com/jetri/chat/server/store/types"
+    i18n "golang.org/x/text/language"
 )
 
 // Validator configuration.

@@ -18,10 +18,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/logs"
+	"github.com/jetri/chat/server/store"
+	"github.com/jetri/chat/server/store/types"
 
 	"golang.org/x/crypto/acme/autocert"
 )

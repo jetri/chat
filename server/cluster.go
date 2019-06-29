@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/concurrency"
-	"github.com/tinode/chat/server/logs"
-	"github.com/tinode/chat/server/push"
-	rh "github.com/tinode/chat/server/ringhash"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+    "github.com/jetri/chat/server/concurrency"
+    "github.com/jetri/chat/server/logs"
+    "github.com/jetri/chat/server/push"
+	rh "github.com/jetri/chat/server/ringhash"
+	"github.com/jetri/chat/server/store/types"
 )
 
 const (
