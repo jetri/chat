@@ -102,9 +102,29 @@ func GetAdapterName() string {
 	return ""
 }
 
-// InitDb creates a new database instance. If 'reset' is true it will first attempt to drop
-// existing database. If jsconf is nil it will assume that the connection is already open.
-// If it's non-nil, it will use the config string to open the DB connection first.
+// GetAdapterVersion returns version of the current adater.
+func GetAdapterVersion() int {
+	if adp != nil {
+		return adp.Version()
+	}
+
+	return -1
+}
+
+// GetDbVersion returns version of the underlying database.
+func GetDbVersion() int {
+	if adp != nil {
+		vers, _ := adp.GetDbVersion()
+		return vers
+	}
+
+	return -1
+}
+
+// InitDb creates and configures a new database instance. If 'reset' is true it will first
+// attempt to drop an existing database. If jsconf is nil it will assume that the adapter is
+// already open. If it's non-nil and the adapter is not open, it will use the config string
+// to open the adapter first.
 func InitDb(jsonconf string, reset bool) error {
 	if !IsOpen() {
 		if err := openAdapter(1, jsonconf); err != nil {
@@ -112,6 +132,18 @@ func InitDb(jsonconf string, reset bool) error {
 		}
 	}
 	return adp.CreateDb(reset)
+}
+
+// UpgradeDb performes an upgrade of the database to the current adapter version.
+// If jsconf is nil it will assume that the adapter is already open. If it's non-nil and the
+// adapter is not open, it will use the config string to open the adapter first.
+func UpgradeDb(jsonconf string) error {
+	if !IsOpen() {
+		if err := openAdapter(1, jsonconf); err != nil {
+			return err
+		}
+	}
+	return adp.UpgradeDb()
 }
 
 // RegisterAdapter makes a persistence adapter available.
@@ -274,9 +306,9 @@ func (UsersObjMapper) Update(uid types.Uid, update map[string]interface{}) error
 	return adp.UserUpdate(uid, update)
 }
 
-// UpdateTags either resets tags to the given slice or creates a union of existing tags and the new ones.
-func (UsersObjMapper) UpdateTags(uid types.Uid, tags []string, reset bool) error {
-	return adp.UserUpdateTags(uid, tags, reset)
+// UpdateTags either adds, removes, or resets tags to the given slices.
+func (UsersObjMapper) UpdateTags(uid types.Uid, add, remove, reset []string) ([]string, error) {
+	return adp.UserUpdateTags(uid, add, remove, reset)
 }
 
 // GetSubs loads a list of subscriptions for the given user. Does not load Public, does not load
@@ -314,44 +346,40 @@ func (UsersObjMapper) GetOwnTopics(id types.Uid, opts *types.QueryOpt) ([]string
 	return adp.OwnTopics(id, opts)
 }
 
-// SaveCred saves a credential validation request.
-func (UsersObjMapper) SaveCred(cred *types.Credential) error {
+// UpsertCred adds or updates a credential validation request. Return true if the record was inserted, false if updated.
+func (UsersObjMapper) UpsertCred(cred *types.Credential) (bool, error) {
 	cred.InitTimes()
-	return adp.CredAdd(cred)
+	return adp.CredUpsert(cred)
 }
 
-// ConfirmCred marks credential as confirmed.
+// ConfirmCred marks credential method as confirmed.
 func (UsersObjMapper) ConfirmCred(id types.Uid, method string) error {
 	return adp.CredConfirm(id, method)
 }
 
-// FailCred increments fail count.
+// FailCred increments fail count for the given credential method.
 func (UsersObjMapper) FailCred(id types.Uid, method string) error {
 	return adp.CredFail(id, method)
 }
 
-// GetCred gets a list of confirmed credentials.
-func (UsersObjMapper) GetCred(id types.Uid, method string) (*types.Credential, error) {
-	var creds []*types.Credential
-	var err error
-	if creds, err = adp.CredGet(id, method); err == nil {
-		if len(creds) > 0 {
-			return creds[0], nil
-		}
-		return nil, nil
-	}
-	return nil, err
-
+// GetActiveCred gets a the currently active credential for the given user and method.
+func (UsersObjMapper) GetActiveCred(id types.Uid, method string) (*types.Credential, error) {
+	return adp.CredGetActive(id, method)
 }
 
-// GetAllCred retrieves all confimed credential for the given user.
-func (UsersObjMapper) GetAllCred(id types.Uid) ([]*types.Credential, error) {
-	return adp.CredGet(id, "")
+// GetAllCreds returns credentials of the given user, all or validated only.
+func (UsersObjMapper) GetAllCreds(id types.Uid, method string, validatedOnly bool) ([]types.Credential, error) {
+	return adp.CredGetAll(id, method, validatedOnly)
 }
 
-// DelCred deletes user's credentials. If method is "" all credentials are deleted.
-func (UsersObjMapper) DelCred(id types.Uid, method string) error {
-	return adp.CredDel(id, method)
+// DelCred deletes user's credentials. If method is "", all credentials are deleted.
+func (UsersObjMapper) DelCred(id types.Uid, method, value string) error {
+	return adp.CredDel(id, method, value)
+}
+
+// GetUnreadCount returs user's total count of unread messages in all topics with the R permissions
+func (UsersObjMapper) GetUnreadCount(id types.Uid) (int, error) {
+	return adp.UserUnreadCount(id)
 }
 
 // TopicsObjMapper is a struct to hold methods for persistence mapping for the topic object.

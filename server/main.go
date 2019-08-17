@@ -56,15 +56,15 @@ import (
 )
 
 const (
+	// currentVersion is the current API/protocol version
+	currentVersion = "0.16"
+	// minSupportedVersion is the minimum supported API version
+	minSupportedVersion = "0.15"
+
 	// idleSessionTimeout defines duration of being idle before terminating a session.
 	idleSessionTimeout = time.Second * 55
 	// idleTopicTimeout defines now long to keep topic alive after the last session detached.
 	idleTopicTimeout = time.Second * 5
-
-	// currentVersion is the current API/protocol version
-	currentVersion = "0.15"
-	// minSupportedVersion is the minimum supported API version
-	minSupportedVersion = "0.15"
 
 	// defaultMaxMessageSize is the default maximum message size
 	defaultMaxMessageSize = 1 << 19 // 512K
@@ -110,18 +110,27 @@ type credValidator struct {
 }
 
 var globals struct {
-	hub          *Hub
+	// Topics cache and processing.
+	hub *Hub
+	// Sessions cache.
 	sessionStore *SessionStore
-	cluster      *Cluster
-	grpcServer   *grpc.Server
-	plugins      []Plugin
-	statsUpdate  chan *varUpdate
+	// Cluster data.
+	cluster *Cluster
+	// gRPC server.
+	grpcServer *grpc.Server
+	// Plugins.
+	plugins []Plugin
+	// Runtime statistics communication channel.
+	statsUpdate chan *varUpdate
+	// Users cache communication channel.
+	usersUpdate chan *userUpdate
 
 	// Credential validators.
 	validators map[string]credValidator
 	// Validators required for each auth level.
 	authValidators map[auth.Level][]string
 
+	// Salt used for signing API key.
 	apiKeySalt []byte
 	// Tag namespaces (prefixes) which are immutable to the client.
 	immutableTagNS map[string]bool
@@ -180,6 +189,9 @@ type configType struct {
 	// Address:port to listen for gRPC clients. If blank gRPC support will not be initialized.
 	// Could be overridden from the command line with --grpc_listen.
 	GrpcListen string `json:"grpc_listen"`
+	// Enable handling of gRPC keepalives https://github.com/grpc/grpc/blob/master/doc/keepalive.md
+	// This sets server's GRPC_ARG_KEEPALIVE_TIME_MS to 60 seconds instead of the default 2 hours.
+	GrpcKeepalive bool `json:"grpc_keepalive_enabled"`
 	// URL path for mounting the directory with static files.
 	StaticMount string `json:"static_mount"`
 	// Local path to static files. All files in this path are made accessible by HTTP.
@@ -273,7 +285,7 @@ func main() {
 
 	err := store.Open(workerId, string(config.Store))
 	if err != nil {
-		log.Fatal("Failed to connect to DB:", err)
+		log.Fatal("Failed to connect to DB: ", err)
 	}
 	defer func() {
 		store.Close()
@@ -289,6 +301,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// List of tag namespaces for user discovery which cannot be changed directly
+	// by the client, e.g. 'email' or 'tel'.
+	globals.immutableTagNS = make(map[string]bool)
+
 	authNames := store.GetAuthNames()
 	for _, name := range authNames {
 		if authhdl := store.GetLogicalAuthHandler(name); authhdl == nil {
@@ -297,12 +313,15 @@ func main() {
 			if err := authhdl.Init(string(jsconf), name); err != nil {
 				log.Fatalln("Failed to init auth scheme", name+":", err)
 			}
+			tags, err := authhdl.RestrictedTags()
+			if err != nil {
+				log.Fatalln("Failed get restricted tag namespaces", name+":", err)
+			}
+			for _, tag := range tags {
+				globals.immutableTagNS[tag] = true
+			}
 		}
 	}
-
-	// List of tag namespaces for user discovery which cannot be changed directly
-	// by the client, e.g. 'email' or 'tel'.
-	globals.immutableTagNS = make(map[string]bool)
 
 	// Process validators.
 	for name, vconf := range config.Validator {
@@ -447,11 +466,14 @@ func main() {
 	// Intialize plugins
 	pluginsInit(config.Plugin)
 
+	// Initialize users cache
+	usersInit()
+
 	// Set up gRPC server, if one is configured
 	if *listenGrpc == "" {
 		*listenGrpc = config.GrpcListen
 	}
-	if globals.grpcServer, err = serveGrpc(*listenGrpc, tlsConfig); err != nil {
+	if globals.grpcServer, err = serveGrpc(*listenGrpc, config.GrpcKeepalive, tlsConfig); err != nil {
 		log.Fatal(err)
 	}
 

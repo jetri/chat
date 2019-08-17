@@ -19,6 +19,8 @@ type Adapter interface {
 	Close() error
 	// IsOpen checks if the adapter is ready for use
 	IsOpen() bool
+	// GetDbVersion returns current database version.
+	GetDbVersion() (int, error)
 	// CheckDbVersion checks if the actual database version matches adapter version.
 	CheckDbVersion() error
 	// GetName returns the name of the adapter
@@ -27,6 +29,10 @@ type Adapter interface {
 	SetMaxResults(val int) error
 	// CreateDb creates the database optionally dropping an existing database first.
 	CreateDb(reset bool) error
+	// UpgradeDb upgrades database to the current adapter version.
+	UpgradeDb() error
+	// Version returns adapter version
+	Version() int
 
 	// User management
 
@@ -42,21 +48,27 @@ type Adapter interface {
 	UserGetDisabled(time.Time) ([]t.Uid, error)
 	// UserUpdate updates user record
 	UserUpdate(uid t.Uid, update map[string]interface{}) error
-	// UserUpdateTags adds or resets user's tags
-	UserUpdateTags(uid t.Uid, tags []string, reset bool) error
+	// UserUpdateTags adds, removes, or resets user's tags
+	UserUpdateTags(uid t.Uid, add, remove, reset []string) ([]string, error)
 	// UserGetByCred returns user ID for the given validated credential.
 	UserGetByCred(method, value string) (t.Uid, error)
+	// UserUnreadCount returns the total number of unread messages in all topics with
+	// the R permission.
+	UserUnreadCount(uid t.Uid) (int, error)
 
 	// Credential management
 
-	// CredAdd adds credential record.
-	CredAdd(cred *t.Credential) error
-	// CredGet returns credential record.
-	CredGet(uid t.Uid, method string) ([]*t.Credential, error)
-	// CredIsConfirmed returns true if the given credential has been verified, false otherwise.
+	// CredUpsert adds or updates a credential record. Returns true if record was inserted, false if updated.
+	CredUpsert(cred *t.Credential) (bool, error)
+	// CredGetActive returns the currently active credential record for the given method.
+	CredGetActive(uid t.Uid, method string) (*t.Credential, error)
+	// CredGetAll returns credential records for the given user and method, validated only or all.
+	CredGetAll(uid t.Uid, method string, validatedOnly bool) ([]t.Credential, error)
+	// CredIsConfirmed returns true if the given credential method has been verified, false otherwise.
 	CredIsConfirmed(uid t.Uid, metod string) (bool, error)
-	// CredDel deletes given credential.
-	CredDel(uid t.Uid, method string) error
+	// CredDel deletes credentials for the given method/value. If method is empty, deletes all
+	// user's credentials.
+	CredDel(uid t.Uid, method, value string) error
 	// CredConfirm marks given credential as validated.
 	CredConfirm(uid t.Uid, method string) error
 	// CredFail increments count of failed validation attepmts for the given credentials.

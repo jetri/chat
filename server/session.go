@@ -34,6 +34,9 @@ const (
 	CLUSTER
 )
 
+// Wait time before abandoning the outbound send operation.
+const sendTimeout = time.Microsecond * 150
+
 var minSupportedVersionValue = parseVersion(minSupportedVersion)
 
 // Session represents a single WS connection or a long polling session. A user may have multiple
@@ -112,10 +115,6 @@ type Session struct {
 
 // Subscription is a mapper of sessions to topics.
 type Subscription struct {
-	// Root's session may have multiple subscriptions to topic on behalf of other users.
-	// This is the use counter.
-	count int
-
 	// Channel to communicate with the topic, copy of Topic.broadcast
 	broadcast chan<- *ServerComMessage
 
@@ -134,12 +133,7 @@ func (s *Session) addSub(topic string, sub *Subscription) {
 	s.subsLock.Lock()
 	defer s.subsLock.Unlock()
 
-	if xsub, ok := s.subs[topic]; ok {
-		xsub.count++
-	} else {
-		sub.count = 1
-		s.subs[topic] = sub
-	}
+	s.subs[topic] = sub
 }
 
 func (s *Session) getSub(topic string) *Subscription {
@@ -153,13 +147,7 @@ func (s *Session) delSub(topic string) {
 	s.subsLock.Lock()
 	defer s.subsLock.Unlock()
 
-	if xsub, ok := s.subs[topic]; ok {
-		if xsub.count <= 1 {
-			delete(s.subs, topic)
-		} else {
-			xsub.count--
-		}
-	}
+	delete(s.subs, topic)
 }
 
 // Inform topics that the session is being terminated.
@@ -174,7 +162,8 @@ func (s *Session) unsubAll() {
 	}
 }
 
-// queueOut attempts to send a ServerComMessage to a session; if the send buffer is full, timeout is 50 usec
+// queueOut attempts to send a ServerComMessage to a session; if the send buffer is full,
+// timeout is `sendTimeout`.
 func (s *Session) queueOut(msg *ServerComMessage) bool {
 	if s == nil {
 		return true
@@ -182,7 +171,7 @@ func (s *Session) queueOut(msg *ServerComMessage) bool {
 
 	select {
 	case s.send <- s.serialize(msg):
-	case <-time.After(time.Microsecond * 50):
+	case <-time.After(sendTimeout):
 		log.Println("s.queueOut: timeout", s.sid)
 		return false
 	}
@@ -190,7 +179,7 @@ func (s *Session) queueOut(msg *ServerComMessage) bool {
 }
 
 // queueOutBytes attempts to send a ServerComMessage already serialized to []byte.
-// If the send buffer is full, timeout is 50 usec
+// If the send buffer is full, timeout is `sendTimeout`.
 func (s *Session) queueOutBytes(data []byte) bool {
 	if s == nil {
 		return true
@@ -198,7 +187,7 @@ func (s *Session) queueOutBytes(data []byte) bool {
 
 	select {
 	case s.send <- data:
-	case <-time.After(time.Microsecond * 50):
+	case <-time.After(sendTimeout):
 		log.Println("s.queueOutBytes: timeout", s.sid)
 		return false
 	}
@@ -412,7 +401,6 @@ func (s *Session) leave(msg *ClientComMessage) {
 	}
 
 	if sub := s.getSub(expanded); sub != nil {
-		log.Println("leave", expanded, "attached")
 		// Session is attached to the topic.
 		if (msg.topic == "me" || msg.topic == "fnd") && msg.Leave.Unsub {
 			// User should not unsubscribe from 'me' or 'find'. Just leaving is fine.
@@ -425,7 +413,7 @@ func (s *Session) leave(msg *ClientComMessage) {
 				topic:  msg.topic,
 				sess:   s,
 				unsub:  msg.Leave.Unsub,
-				reqID:  msg.id}
+				id:     msg.id}
 		}
 	} else if globals.cluster.isRemoteTopic(expanded) {
 		// The topic is handled by a remote node. Forward message to it.
@@ -434,7 +422,6 @@ func (s *Session) leave(msg *ClientComMessage) {
 			s.queueOut(ErrClusterUnreachable(msg.id, msg.topic, msg.timestamp))
 		}
 	} else if !msg.Leave.Unsub {
-		log.Println("leave", expanded, "not attached")
 		// Session is not attached to the topic, wants to leave - fine, no change
 		s.queueOut(InfoNotJoined(msg.id, msg.topic, msg.timestamp))
 	} else {
@@ -635,15 +622,16 @@ func (s *Session) login(msg *ClientComMessage) {
 	}
 
 	var missing []string
-	if rec.Features&auth.FeatureValidated == 0 {
+	if rec.Features&auth.FeatureValidated == 0 && len(globals.authValidators[rec.AuthLevel]) > 0 {
 		var validated []string
-		if validated, err = s.getValidatedGred(rec.Uid, rec.AuthLevel, msg.Login.Cred); err == nil {
+		// Check responses. Ignore invalid responses, just keep cred unvalidated.
+		if validated, _, err = validatedCreds(rec.Uid, rec.AuthLevel, msg.Login.Cred, false); err == nil {
 			// Get a list of credentials which have not been validated.
 			_, missing = stringSliceDelta(globals.authValidators[rec.AuthLevel], validated)
 		}
 	}
 	if err != nil {
-		log.Println("s.login: failed to validate credentials", err, s.sid)
+		log.Println("s.login: failed to validate credentials:", err, s.sid)
 		s.queueOut(decodeStoreError(err, msg.id, "", msg.timestamp, nil))
 	} else {
 		s.queueOut(s.onLogin(msg.id, msg.timestamp, rec, missing))
@@ -719,16 +707,6 @@ func (s *Session) onLogin(msgID string, timestamp time.Time, rec *auth.Rec, miss
 		}
 		features |= auth.FeatureValidated
 
-		// If authenticator provided updated tags, use them to update the user.
-		if len(rec.Tags) > 0 {
-			log.Println("Resetting user's tags", normalizeTags(rec.Tags))
-
-			if err := store.Users.UpdateTags(rec.Uid, normalizeTags(rec.Tags), true); err != nil {
-
-				log.Println("failed to update user's tags", err)
-			}
-		}
-
 		// Record deviceId used in this session
 		if s.deviceID != "" {
 			if err := store.Devices.Update(rec.Uid, "", &types.DeviceDef{
@@ -749,68 +727,6 @@ func (s *Session) onLogin(msgID string, timestamp time.Time, rec *auth.Rec, miss
 
 	reply.Ctrl.Params = params
 	return reply
-}
-
-// Get a list of all validated credentials including those validated in this call.
-func (s *Session) getValidatedGred(uid types.Uid, authLvl auth.Level, creds []MsgAccCred) ([]string, error) {
-
-	// Check if credential validation is required.
-	if len(globals.authValidators[authLvl]) == 0 {
-		return nil, nil
-	}
-
-	allCred, err := store.Users.GetAllCred(uid)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compile a list of validated credentials.
-	var validated []string
-	for _, cr := range allCred {
-		if cr.Done {
-			validated = append(validated, cr.Method)
-		}
-	}
-
-	// Add credentials which are validated in this call.
-	// Unknown validators are removed.
-	creds = normalizeCredentials(creds, false)
-	var tags []string
-	for i := range creds {
-		cr := &creds[i]
-		if cr.Response == "" {
-			// Ignore unknown validation type or empty response.
-			continue
-		}
-		vld := store.GetValidator(cr.Method)
-		value, err := vld.Check(uid, cr.Response)
-		if err != nil {
-			// Check failed.
-			if storeErr, ok := err.(types.StoreError); ok && storeErr == types.ErrCredentials {
-				// Just an invalid response. Keep credential unvalidated.
-				continue
-			}
-			// Actual error. Report back.
-			return nil, err
-		}
-
-		// Check did not return an error: the request was successfully validated.
-		validated = append(validated, cr.Method)
-
-		// Add validated credential to user's tags.
-		if globals.validators[cr.Method].addToTags {
-			tags = append(tags, cr.Method+":"+value)
-		}
-	}
-
-	if len(tags) > 0 {
-		// Save update to tags
-		if err := store.Users.UpdateTags(uid, tags, false); err != nil {
-			return nil, err
-		}
-	}
-
-	return validated, nil
 }
 
 func (s *Session) get(msg *ClientComMessage) {
@@ -868,6 +784,9 @@ func (s *Session) set(msg *ClientComMessage) {
 	}
 	if msg.Set.Tags != nil {
 		meta.what |= constMsgMetaTags
+	}
+	if msg.Set.Cred != nil {
+		meta.what |= constMsgMetaCred
 	}
 
 	if meta.what == 0 {

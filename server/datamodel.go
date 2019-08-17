@@ -60,6 +60,18 @@ type MsgSetDesc struct {
 	Private    interface{}        `json:"private,omitempty"` // Per-subscription private data
 }
 
+// MsgCredClient is an account credential such as email or phone number.
+type MsgCredClient struct {
+	// Credential type, i.e. `email` or `tel`.
+	Method string `json:"meth,omitempty"`
+	// Value to verify, i.e. `user@example.com` or `+18003287448`
+	Value string `json:"val,omitempty"`
+	// Verification response
+	Response string `json:"resp,omitempty"`
+	// Request parameters, such as preferences. Passed to valiator without interpretation.
+	Params interface{} `json:"params,omitempty"`
+}
+
 // MsgSetQuery is an update to topic metadata: Desc, subscriptions, or tags.
 type MsgSetQuery struct {
 	// Topic metadata, new topic & new subscriptions only
@@ -68,6 +80,8 @@ type MsgSetQuery struct {
 	Sub *MsgSetSub `json:"sub,omitempty"`
 	// Indexable tags for user discovery
 	Tags []string `json:"tags,omitempty"`
+	// Update to account credentials.
+	Cred *MsgCredClient `json:"cred,omitempty"`
 }
 
 // MsgDelRange is either an individual ID (HiId=0) or a randge of deleted IDs, low end inclusive (closed),
@@ -95,18 +109,6 @@ type MsgClientHi struct {
 	Platform string `json:"platf,omitempty"`
 }
 
-// MsgAccCred is an account credential, provided or verified.
-type MsgAccCred struct {
-	// Credential type, i.e. `email` or `tel`.
-	Method string `json:"meth,omitempty"`
-	// Value to verify, i.e. `user@example.com` or `+18003287448`
-	Value string `json:"val,omitempty"`
-	// Verification response
-	Response string `json:"resp,omitempty"`
-	// Request parameters, such as preferences. Passed to valiator without interpretation.
-	Params interface{} `json:"params,omitempty"`
-}
-
 // MsgClientAcc is an {acc} message for creating or updating a user account.
 type MsgClientAcc struct {
 	// Message Id
@@ -129,7 +131,7 @@ type MsgClientAcc struct {
 	// User initialization data when creating a new user, otherwise ignored
 	Desc *MsgSetDesc `json:"desc,omitempty"`
 	// Credentials to verify (email or phone or captcha)
-	Cred []MsgAccCred `json:"cred,omitempty"`
+	Cred []MsgCredClient `json:"cred,omitempty"`
 }
 
 // MsgClientLogin is a login {login} message.
@@ -140,8 +142,8 @@ type MsgClientLogin struct {
 	Scheme string `json:"scheme,omitempty"`
 	// Shared secret
 	Secret []byte `json:"secret"`
-	// Credntials to verify (email or phone or captcha etc.)
-	Cred []MsgAccCred `json:"cred,omitempty"`
+	// Credntials being verified (email or phone or captcha etc.)
+	Cred []MsgCredClient `json:"cred,omitempty"`
 }
 
 // MsgClientSub is a subscription request {sub} message.
@@ -162,6 +164,7 @@ const (
 	constMsgMetaData
 	constMsgMetaTags
 	constMsgMetaDel
+	constMsgMetaCred
 )
 
 const (
@@ -169,6 +172,7 @@ const (
 	constMsgDelMsg
 	constMsgDelSub
 	constMsgDelUser
+	constMsgDelCred
 )
 
 func parseMsgClientMeta(params string) int {
@@ -186,6 +190,8 @@ func parseMsgClientMeta(params string) int {
 			bits |= constMsgMetaTags
 		case "del":
 			bits |= constMsgMetaDel
+		case "cred":
+			bits |= constMsgMetaCred
 		default:
 			// ignore unknown
 		}
@@ -203,6 +209,8 @@ func parseMsgClientDel(params string) int {
 		return constMsgDelSub
 	case "user":
 		return constMsgDelUser
+	case "cred":
+		return constMsgDelCred
 	default:
 		// ignore
 	}
@@ -254,11 +262,14 @@ type MsgClientDel struct {
 	// * "topic" to delete the topic
 	// * "sub" to delete a subscription to topic.
 	// * "user" to delete or disable user.
+	// * "cred" to delete credential (email or phone)
 	What string `json:"what"`
 	// Delete messages with these IDs (either one by one or a set of ranges)
 	DelSeq []MsgDelRange `json:"delseq,omitempty"`
 	// User ID of the user or subscription to delete
 	User string `json:"user,omitempty"`
+	// Credential to delete
+	Cred *MsgCredClient `json:"cred,omitempty"`
 	// Request to hard-delete objects (i.e. delete messages for all users), if such option is available.
 	Hard bool `json:"hard,omitempty"`
 }
@@ -271,6 +282,8 @@ type MsgClientNote struct {
 	What string `json:"what"`
 	// Server-issued message ID being reported
 	SeqId int `json:"seq,omitempty"`
+	// Client's count of unread messages to report back to the server. Used in push notifications on iOS.
+	Unread int `json:"unread,omitempty"`
 }
 
 // ClientComMessage is a wrapper for client messages.
@@ -307,6 +320,16 @@ type MsgLastSeenInfo struct {
 	When *time.Time `json:"when,omitempty"`
 	// User agent of the device when the user was last online.
 	UserAgent string `json:"ua,omitempty"`
+}
+
+// MsgCredServer is an account credential such as email or phone number.
+type MsgCredServer struct {
+	// Credential type, i.e. `email` or `tel`.
+	Method string `json:"meth,omitempty"`
+	// Credential value, i.e. `user@example.com` or `+18003287448`
+	Value string `json:"val,omitempty"`
+	// Indicates that the credential is validated.
+	Done bool `json:"done,omitempty"`
 }
 
 // MsgAccessMode is a definition of access mode.
@@ -422,7 +445,7 @@ type MsgServerData struct {
 // MsgServerPres is presence notification {pres} (authoritative update).
 type MsgServerPres struct {
 	Topic     string        `json:"topic"`
-	Src       string        `json:"src"`
+	Src       string        `json:"src,omitempty"`
 	What      string        `json:"what"`
 	UserAgent string        `json:"ua,omitempty"`
 	SeqId     int           `json:"seq,omitempty"`
@@ -470,6 +493,8 @@ type MsgServerMeta struct {
 	Del *MsgDelValues `json:"del,omitempty"`
 	// User discovery tags
 	Tags []string `json:"tags,omitempty"`
+	// Account credentials, 'me' only.
+	Cred []*MsgCredServer `json:"cred,omitempty"`
 }
 
 // MsgServerInfo is the server-side copy of MsgClientNote with From added (non-authoritative).
@@ -736,6 +761,16 @@ func ErrOperationNotAllowed(id, topic string, ts time.Time) *ServerComMessage {
 		Id:        id,
 		Code:      http.StatusMethodNotAllowed, // 405
 		Text:      "operation or method not allowed",
+		Topic:     topic,
+		Timestamp: ts}}
+}
+
+// ErrInvalidResponse indicates that the client's response in invalid (406).
+func ErrInvalidResponse(id, topic string, ts time.Time) *ServerComMessage {
+	return &ServerComMessage{Ctrl: &MsgServerCtrl{
+		Id:        id,
+		Code:      http.StatusNotAcceptable, // 406
+		Text:      "invalid response",
 		Topic:     topic,
 		Timestamp: ts}}
 }
