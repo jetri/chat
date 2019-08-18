@@ -129,6 +129,52 @@ func sendNotifications(rcpt *push.Receipt, config *configType) {
 				// Token is no longer valid.
 				log.Println("fcm push: invalid token", err)
 				err = store.Devices.Delete(m.Uid, m.DeviceId)
+	/* for uid, devList := range devices {
+		for i := range devList {
+			d := &devList[i]
+			if _, ok := skipDevices[d.DeviceId]; !ok && d.DeviceId != "" {
+				msg := fcm.Message{
+					Token: d.DeviceId,
+					Data:  data,
+				}
+
+				if d.Platform == "android" {
+					msg.Android = &fcm.AndroidConfig{
+						Priority: "high",
+					}
+					if config.IncludeAndroidNotification {
+						msg.Android.Notification = &fcm.AndroidNotification{
+							Title: "New message",
+							Body:  data["content"],
+							Icon:  config.Icon,
+							Color: config.IconColor,
+						}
+					}
+				} else if d.Platform == "ios" {
+					// iOS uses Badge to show the total unread message count.
+					// J3 set badge cound to 0 for now
+					badge := 0
+					msg.APNS = &fcm.APNSConfig{
+						Payload: &fcm.APNSPayload{
+							Aps: &fcm.Aps{Badge: &badge},
+						},
+					}
+					msg.Notification = &fcm.Notification{
+						Title: "New message",
+						Body:  data["content"],
+					}
+				}
+
+				// Firebase messaging is buggy and poorly documented. If
+				// msg.Notification is defined, then firebase will ignore
+				// whatever handler is set in setBackgroundMessageHandler.
+				// See dicussion of this madness here:
+				// https://github.com/firebase/quickstart-js/issues/71
+				// msg.Notification = &fcm.Notification{
+				//	 Title: "New message",
+				//	 Body:  data["content"],
+				// }
+				_, err := handler.client.Send(ctx, &msg) */
 				if err != nil {
 					log.Println("fcm push: failed to delete invalid token", err)
 				}
