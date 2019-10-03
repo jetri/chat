@@ -61,8 +61,8 @@ func (Handler) Init(jsonconf string) error {
 
 	var opt option.ClientOption
 	if config.Credentials != nil {
-		credentials, err := google.CredentialsFromJSON(ctx, config.Credentials,
-			"https://www.googleapis.com/auth/firebase.messaging")
+		unquotedCreds, _ := strconv.Unquote(string(config.Credentials))
+		credentials, err := google.CredentialsFromJSON(ctx, []byte(unquotedCreds), "https://www.googleapis.com/auth/firebase.messaging")
 		if err != nil {
 			return err
 		}

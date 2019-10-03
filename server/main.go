@@ -610,6 +610,9 @@ func main() {
 	}
 	log.Printf("API served from root URL path '%s'", config.ApiPath)
 
+	// Health check
+	mux.HandleFunc("/v0/_health", serveHealth)
+
 	// Handle websocket clients.
 	mux.HandleFunc(config.ApiPath+"v0/channels", serveWebSocket)
 	// Handle long polling clients. Enable compression.
@@ -630,4 +633,9 @@ func main() {
 	if err = listenAndServe(config.Listen, mux, tlsConfig, signalHandler()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func serveHealth(wrt http.ResponseWriter, req *http.Request) {
+	wrt.WriteHeader(http.StatusOK)
+	return
 }
