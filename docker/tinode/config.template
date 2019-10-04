@@ -118,7 +118,7 @@
 			"config": {
 				"enabled": $FCM_PUSH_ENABLED,
 				"project_id": "$FCM_PROJECT_ID",
-				"credentials": "$FCM_CRED",
+				"credentials_file": "$FCM_CRED_FILE",
 				"time_to_live": 3600,
 				"android": {
 					"enabled": $FCM_INCLUDE_ANDROID_NOTIFICATION,
