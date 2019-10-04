@@ -59,6 +59,12 @@ func (Handler) Init(jsonconf string) error {
 		return errors.New("failed to parse config: " + err.Error())
 	}
 
+	if os.Getenv("FCM_CRED") != "" {
+		// unquotedCreds, _ := strconv.Unquote(os.Getenv("FCM_CRED"))
+		log.Println("FCM CRED from environment variable")
+		config.Credentials = []byte(os.Getenv("FCM_CRED"))
+	}
+
 	if !config.Enabled {
 		return nil
 	}
@@ -66,8 +72,7 @@ func (Handler) Init(jsonconf string) error {
 
 	var opt option.ClientOption
 	if config.Credentials != nil {
-		unquotedCreds, _ := strconv.Unquote(string(config.Credentials))
-		credentials, err := google.CredentialsFromJSON(ctx, []byte(unquotedCreds), "https://www.googleapis.com/auth/firebase.messaging")
+		credentials, err := google.CredentialsFromJSON(ctx, config.Credentials, "https://www.googleapis.com/auth/firebase.messaging")
 		if err != nil {
 			return err
 		}
