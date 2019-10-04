@@ -173,8 +173,13 @@ func main() {
 
 	flag.Parse()
 
+	log.Println("Flags parsed")
+
 	var data Data
 	if *datafile != "" && *datafile != "-" {
+
+		log.Println("Read data file")
+
 		raw, err := ioutil.ReadFile(*datafile)
 		if err != nil {
 			log.Fatalln("Failed to read sample data file:", err)
@@ -189,6 +194,8 @@ func main() {
 	data.datapath, _ = filepath.Split(*datafile)
 
 	var config configType
+
+	log.Println("Opening config file")
 	if file, err := os.Open(*conffile); err != nil {
 		log.Fatalln("Failed to read config file:", err)
 	} else {
