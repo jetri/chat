@@ -139,3 +139,4 @@ args=("--config=${CONFIG}" "--static_data=$STATIC_DIR" "--cluster_self=$CLUSTER_
 
 # Run the tinode server.
 ./tinode "${args[@]}" 2>> /var/log/tinode.log
+# ./tinode --config=${CONFIG} --static_data=${STATIC_PATH} 2> /var/log/tinode.log
