@@ -45,7 +45,7 @@ do
 done
 
 # Build chatbot image
-buildtags="--tag tinode/chatbot:${ver[0]}.${ver[1]}.${ver[2]}"
+/* buildtags="--tag tinode/chatbot:${ver[0]}.${ver[1]}.${ver[2]}"
 rmitags="tinode/chatbot:${ver[0]}.${ver[1]}.${ver[2]}"
 if [ -n "$FULLRELEASE" ]; then
   rmitags="${rmitags} tinode/chatbot:latest tinode/chatbot:${ver[0]}.${ver[1]}"
@@ -62,4 +62,12 @@ if [ -n "$FULLRELEASE" ]; then
   buildtags="${buildtags}  --tag tinode/exporter:latest --tag tinode/exporter:${ver[0]}.${ver[1]}"
 fi
 docker rmi ${rmitags}
-docker build --build-arg VERSION=$tag ${buildtags} docker/exporter
+docker build --build-arg VERSION=$tag ${buildtags} docker/exporter */
+# buildtags="--tag tinode/chatbot:${ver[0]}.${ver[1]}.${ver[2]}"
+# rmitags="tinode/chatbot:${ver[0]}.${ver[1]}.${ver[2]}"
+# if [ -n "$FULLRELEASE" ]; then
+#   rmitags="${rmitags} tinode/chatbot:latest tinode/chatbot:${ver[0]}.${ver[1]}"
+#   buildtags="${buildtags}  --tag tinode/chatbot:latest --tag tinode/chatbot:${ver[0]}.${ver[1]}"
+# fi
+# docker rmi ${rmitags}
+# docker build --build-arg VERSION=$tag ${buildtags} docker/chatbot
