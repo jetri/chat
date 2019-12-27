@@ -6,7 +6,7 @@ import { defineMessages, injectIntl } from 'react-intl';
 import * as firebase from 'firebase/app';
 import 'firebase/messaging';
 
-import Tinode from 'tinode-sdk';
+import Tinode from '../lib/tinode.prod';
 
 import ContextMenu from '../widgets/context-menu.jsx';
 
