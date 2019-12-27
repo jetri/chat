@@ -615,15 +615,18 @@ func main() {
 	logs.Info.Printf("API served from root URL path '%s'", config.ApiPath)
 
 	// Health check
-	mux.HandleFunc("/v0/_health", serveHealth)
+	mux.HandleFunc("/chat/v0/_health", serveHealth)
 
 	// Handle websocket clients.
 	mux.HandleFunc(config.ApiPath+"v0/channels", serveWebSocket)
+	// mux.HandleFunc("/chat/v0/channels", serveWebSocket)
 	// Handle long polling clients. Enable compression.
 	mux.Handle(config.ApiPath+"v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
+    // mux.Handle("/chat/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
 	if config.Media != nil {
 		// Handle uploads of large files.
 		mux.Handle(config.ApiPath+"v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileReceive)))
+		// mux.Handle("/chat/v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileReceive)))
 		// Serve large files.
 		mux.Handle(config.ApiPath+"v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
 		logs.Info.Println("Large media handling enabled", config.Media.UseHandler)

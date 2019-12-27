@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	defaultServeURL = "/v0/file/s/"
+	defaultServeURL = "/chat/v0/file/s/"
 	handlerName     = "s3"
 )
 
