@@ -160,3 +160,9 @@ Words 'chat' and 'instant messaging' in Chinese, Russian, Persian and a few othe
 * mensageiro instantâneo
 * pesan instan
 * mensajería instantánea
+
+#### Foodry
+Build image
+```
+./docker-build.sh tag=v0.16.0    
+```
