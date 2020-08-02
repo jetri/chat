@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -29,12 +30,11 @@ import (
 )
 
 func listenAndServe(addr string, mux *http.ServeMux, tlfConf *tls.Config, stop <-chan bool) error {
-	shuttingDown := false
+	globals.shuttingDown = false
 
 	httpdone := make(chan bool)
 
 	server := &http.Server{
-		Addr:    addr,
 		Handler: mux,
 	}
 
@@ -45,26 +45,42 @@ func listenAndServe(addr string, mux *http.ServeMux, tlfConf *tls.Config, stop <
 		if server.TLSConfig != nil {
 			// If port is not specified, use default https port (443),
 			// otherwise it will default to 80
-			if server.Addr == "" {
-				server.Addr = ":https"
+			if addr == "" {
+				addr = ":https"
 			}
 
 			if globals.tlsRedirectHTTP != "" {
-				log.Printf("Redirecting connections from HTTP at [%s] to HTTPS at [%s]",
-					globals.tlsRedirectHTTP, server.Addr)
+				// Serving redirects from a unix socket or to a unix socket makes no sense.
+				if isUnixAddr(globals.tlsRedirectHTTP) || isUnixAddr(addr) {
+					err = errors.New("HTTP to HTTPS redirect: unix sockets not supported.")
+				} else {
+					log.Printf("Redirecting connections from HTTP at [%s] to HTTPS at [%s]",
+						globals.tlsRedirectHTTP, addr)
 
-				// This is a second HTTP server listenning on a different port.
-				go http.ListenAndServe(globals.tlsRedirectHTTP, tlsRedirect(server.Addr))
+					// This is a second HTTP server listenning on a different port.
+					go http.ListenAndServe(globals.tlsRedirectHTTP, tlsRedirect(addr))
+				}
 			}
 
-			log.Printf("Listening for client HTTPS connections on [%s]", server.Addr)
-			err = server.ListenAndServeTLS("", "")
+			if err == nil {
+				log.Printf("Listening for client HTTPS connections on [%s]", addr)
+				var lis net.Listener
+				lis, err = netListener(addr)
+				if err == nil {
+					err = server.ServeTLS(lis, "", "")
+				}
+			}
 		} else {
-			log.Printf("Listening for client HTTP connections on [%s]", server.Addr)
-			err = server.ListenAndServe()
+			log.Printf("Listening for client HTTP connections on [%s]", addr)
+			var lis net.Listener
+			lis, err = netListener(addr)
+			if err == nil {
+				err = server.Serve(lis)
+			}
 		}
+
 		if err != nil {
-			if shuttingDown {
+			if globals.shuttingDown {
 				log.Println("HTTP server: stopped")
 			} else {
 				log.Println("HTTP server: failed", err)
@@ -79,7 +95,7 @@ Loop:
 		select {
 		case <-stop:
 			// Flip the flag that we are terminating and close the Accept-ing socket, so no new connections are possible.
-			shuttingDown = true
+			globals.shuttingDown = true
 			// Give server 2 seconds to shut down.
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if err := server.Shutdown(ctx); err != nil {

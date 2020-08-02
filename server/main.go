@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	// For stripping comments from JSON config
-	jcr "github.com/DisposaBoy/JsonConfigReader"
-
 	gh "github.com/gorilla/handlers"
+
+	// For stripping comments from JSON config
+	jcr "github.com/tinode/jsonco"
 
 	// Authenticators
 	"github.com/tinode/chat/server/auth"
@@ -35,6 +35,7 @@ import (
 	_ "github.com/tinode/chat/server/auth/token"
 
 	// Database backends
+	_ "github.com/tinode/chat/server/db/mongodb"
 	_ "github.com/tinode/chat/server/db/mysql"
 	_ "github.com/tinode/chat/server/db/rethinkdb"
 
@@ -42,6 +43,7 @@ import (
 	"github.com/tinode/chat/server/push"
 	_ "github.com/tinode/chat/server/push/fcm"
 	_ "github.com/tinode/chat/server/push/stdout"
+	_ "github.com/tinode/chat/server/push/tnpg"
 
 	"github.com/tinode/chat/server/store"
 
@@ -63,8 +65,10 @@ const (
 
 	// idleSessionTimeout defines duration of being idle before terminating a session.
 	idleSessionTimeout = time.Second * 55
-	// idleTopicTimeout defines now long to keep topic alive after the last session detached.
-	idleTopicTimeout = time.Second * 5
+	// idleMasterTopicTimeout defines now long to keep master topic alive after the last session detached.
+	idleMasterTopicTimeout = time.Second * 4
+	// Same as above but shut down the proxy topic sooner. Otherwise master topic would be kept alive for too long.
+	idleProxyTopicTimeout = time.Second * 2
 
 	// defaultMaxMessageSize is the default maximum message size
 	defaultMaxMessageSize = 1 << 19 // 512K
@@ -77,7 +81,7 @@ const (
 	defaultMaxTagCount = 16
 
 	// minTagLength is the shortest acceptable length of a tag in runes. Shorter tags are discarded.
-	minTagLength = 4
+	minTagLength = 2
 	// maxTagLength is the maximum length of a tag in runes. Longer tags are trimmed.
 	maxTagLength = 96
 
@@ -87,11 +91,18 @@ const (
 	// maxDeleteCount is the maximum allowed number of messages to delete in one call.
 	defaultMaxDeleteCount = 1024
 
-	// Mount point where static content is served, http://host-name/<defaultStaticMount>
+	// Base URL path for serving the streaming API.
+	defaultApiPath = "/"
+
+	// Mount point where static content is served, http://host-name<defaultStaticMount>
 	defaultStaticMount = "/"
 
 	// Local path to static content
 	defaultStaticPath = "static"
+
+	// Default country code to fall back to if the "default_country_code" field
+	// isn't specified in the config.
+	defaultCountryCode = "US"
 )
 
 // Build version number defined by the compiler:
@@ -100,6 +111,8 @@ const (
 // For instance, to define the buildstamp as a timestamp of when the server was built add a
 // flag to compiler command line:
 // 		-ldflags "-X main.buildstamp=`date -u '+%Y%m%dT%H:%M:%SZ'`"
+// or to set it to git tag:
+// 		-ldflags "-X main.buildstamp=`git describe --tags`"
 var buildstamp = "undef"
 
 // CredValidator holds additional config params for a credential validator.
@@ -112,6 +125,8 @@ type credValidator struct {
 var globals struct {
 	// Topics cache and processing.
 	hub *Hub
+	// Indicator that shutdown is in progress
+	shuttingDown bool
 	// Sessions cache.
 	sessionStore *SessionStore
 	// Cluster data.
@@ -123,7 +138,7 @@ var globals struct {
 	// Runtime statistics communication channel.
 	statsUpdate chan *varUpdate
 	// Users cache communication channel.
-	usersUpdate chan *userUpdate
+	usersUpdate chan *UserCacheReq
 
 	// Credential validators.
 	validators map[string]credValidator
@@ -152,6 +167,12 @@ var globals struct {
 
 	// Maximum allowed upload size.
 	maxFileUploadSize int64
+
+	// Prioritise X-Forwarded-For header as the source of IP address of the client.
+	useXForwardedFor bool
+
+	// Country code to assign to sessions by default.
+	defaultCountryCode string
 }
 
 type validatorConfig struct {
@@ -178,12 +199,15 @@ type mediaConfig struct {
 
 // Contentx of the configuration file
 type configType struct {
-	// Default HTTP(S) address:port to listen on for websocket and long polling clients. Either a
+	// HTTP(S) address:port to listen on for websocket and long polling clients. Either a
 	// numeric or a canonical name, e.g. ":80" or ":https". Could include a host name, e.g.
 	// "localhost:80".
 	// Could be blank: if TLS is not configured, will use ":80", otherwise ":443".
 	// Can be overridden from the command line, see option --listen.
 	Listen string `json:"listen"`
+	// Base URL path where the streaming and large file API calls are served, default is '/'.
+	// Can be overridden from the command line, see option --api_path.
+	ApiPath string `json:"api_path"`
 	// Cache-Control value for static content.
 	CacheControl int `json:"cache_control"`
 	// Address:port to listen for gRPC clients. If blank gRPC support will not be initialized.
@@ -192,7 +216,7 @@ type configType struct {
 	// Enable handling of gRPC keepalives https://github.com/grpc/grpc/blob/master/doc/keepalive.md
 	// This sets server's GRPC_ARG_KEEPALIVE_TIME_MS to 60 seconds instead of the default 2 hours.
 	GrpcKeepalive bool `json:"grpc_keepalive_enabled"`
-	// URL path for mounting the directory with static files.
+	// URL path for mounting the directory with static files (usually TinodeWeb).
 	StaticMount string `json:"static_mount"`
 	// Local path to static files. All files in this path are made accessible by HTTP.
 	StaticData string `json:"static_data"`
@@ -209,6 +233,13 @@ type configType struct {
 	MaxTagCount int `json:"max_tag_count"`
 	// URL path for exposing runtime stats. Disabled if the path is blank.
 	ExpvarPath string `json:"expvar"`
+	// Take IP address of the client from HTTP header 'X-Forwarded-For'.
+	// Useful when tinode is behind a proxy. If missing, fallback to default RemoteAddr.
+	UseXForwardedFor bool `json:"use_x_forwarded_for"`
+	// 2-letter country code (ISO 3166-1 alpha-2) to assign to sessions by default
+	// when the country isn't specified by the client explicitly and
+	// it's impossible to infer it.
+	DefaultCountryCode string `json:"default_country_code"`
 
 	// Configs for subsystems
 	Cluster   json.RawMessage             `json:"cluster_config"`
@@ -228,19 +259,21 @@ func main() {
 	// Absolute paths are left unchanged.
 	rootpath, _ := filepath.Split(executable)
 
-	log.Printf("Server v%s:%s:%s; db: '%s'; pid %d; %d process(es)",
+	log.Printf("Server v%s:%s:%s; pid %d; %d process(es)",
 		currentVersion, executable, buildstamp,
-		store.GetAdapterName(), os.Getpid(), runtime.GOMAXPROCS(runtime.NumCPU()))
+		os.Getpid(), runtime.GOMAXPROCS(runtime.NumCPU()))
 
 	var configfile = flag.String("config", "tinode.conf", "Path to config file.")
 	// Path to static content.
-	var staticPath = flag.String("static_data", defaultStaticPath, "Path to directory with static files to be served.")
+	var staticPath = flag.String("static_data", defaultStaticPath, "File path to directory with static files to be served.")
 	var listenOn = flag.String("listen", "", "Override address and port to listen on for HTTP(S) clients.")
+	var apiPath = flag.String("api_path", "", "Override the base URL path where API is served.")
 	var listenGrpc = flag.String("grpc_listen", "", "Override address and port to listen on for gRPC clients.")
 	var tlsEnabled = flag.Bool("tls_enabled", false, "Override config value for enabling TLS.")
 	var clusterSelf = flag.String("cluster_self", "", "Override the name of the current cluster node.")
-	var expvarPath = flag.String("expvar", "", "Override the path where runtime stats are exposed.")
+	var expvarPath = flag.String("expvar", "", "Override the URL path where runtime stats are exposed. Use '-' to disable.")
 	var pprofFile = flag.String("pprof", "", "File name to save profiling info to. Disabled if not set.")
+	var pprofUrl = flag.String("pprof_url", "", "Debugging only! URL path for exposing profiling info. Disabled if not set.")
 	flag.Parse()
 
 	*configfile = toAbsolutePath(rootpath, *configfile)
@@ -249,13 +282,47 @@ func main() {
 	var config configType
 	if file, err := os.Open(*configfile); err != nil {
 		log.Fatal("Failed to read config file: ", err)
-	} else if err = json.NewDecoder(jcr.New(file)).Decode(&config); err != nil {
-		log.Fatal("Failed to parse config file: ", err)
+	} else {
+		jr := jcr.New(file)
+		if err = json.NewDecoder(jr).Decode(&config); err != nil {
+			switch jerr := err.(type) {
+			case *json.UnmarshalTypeError:
+				lnum, cnum, _ := jr.LineAndChar(jerr.Offset)
+				log.Fatalf("Unmarshall error in config file in %s at %d:%d (offset %d bytes): %s",
+					jerr.Field, lnum, cnum, jerr.Offset, jerr.Error())
+			case *json.SyntaxError:
+				lnum, cnum, _ := jr.LineAndChar(jerr.Offset)
+				log.Fatalf("Syntax error in config file at %d:%d (offset %d bytes): %s",
+					lnum, cnum, jerr.Offset, jerr.Error())
+			default:
+				log.Fatal("Failed to parse config file: ", err)
+			}
+		}
+		file.Close()
 	}
 
 	if *listenOn != "" {
 		config.Listen = *listenOn
 	}
+
+	// Set up HTTP server. Must use non-default mux because of expvar.
+	mux := http.NewServeMux()
+
+	// Exposing values for statistics and monitoring.
+	evpath := *expvarPath
+	if evpath == "" {
+		evpath = config.ExpvarPath
+	}
+	statsInit(mux, evpath)
+	statsRegisterInt("Version")
+	decVersion := base10Version(parseVersion(buildstamp))
+	if decVersion <= 0 {
+		decVersion = base10Version(parseVersion(currentVersion))
+	}
+	statsSet("Version", decVersion)
+
+	// Initialize serving debug profiles (optional).
+	servePprof(mux, *pprofUrl)
 
 	// Initialize cluster and receive calculated workerId.
 	// Cluster won't be started here yet.
@@ -283,10 +350,11 @@ func main() {
 		log.Printf("Profiling info saved to '%s.(cpu|mem)'", *pprofFile)
 	}
 
-	err := store.Open(workerId, string(config.Store))
+	err := store.Open(workerId, config.Store)
 	if err != nil {
 		log.Fatal("Failed to connect to DB: ", err)
 	}
+	log.Println("DB adapter", store.GetAdapterName())
 	defer func() {
 		store.Close()
 		log.Println("Closed database connection(s)")
@@ -310,14 +378,17 @@ func main() {
 		if authhdl := store.GetLogicalAuthHandler(name); authhdl == nil {
 			log.Fatalln("Unknown authenticator", name)
 		} else if jsconf := config.Auth[name]; jsconf != nil {
-			if err := authhdl.Init(string(jsconf), name); err != nil {
+			if err := authhdl.Init(jsconf, name); err != nil {
 				log.Fatalln("Failed to init auth scheme", name+":", err)
 			}
 			tags, err := authhdl.RestrictedTags()
 			if err != nil {
-				log.Fatalln("Failed get restricted tag namespaces", name+":", err)
+				log.Fatalln("Failed get restricted tag namespaces (prefixes)", name+":", err)
 			}
 			for _, tag := range tags {
+				if strings.Contains(tag, ":") {
+					log.Fatalln("tags restricted by auth handler should not contain character ':'", tag)
+				}
 				globals.immutableTagNS[tag] = true
 			}
 		}
@@ -329,7 +400,7 @@ func main() {
 		// The namespace can be restricted even if the validator is disabled.
 		if vconf.AddToTags {
 			if strings.Contains(name, ":") {
-				log.Fatal("acc_validation names should not contain character ':'")
+				log.Fatalln("acc_validation names should not contain character ':'", name)
 			}
 			globals.immutableTagNS[name] = true
 		}
@@ -378,7 +449,7 @@ func main() {
 	globals.maskedTagNS = make(map[string]bool, len(config.MaskedTagNamespaces))
 	for _, tag := range config.MaskedTagNamespaces {
 		if strings.Contains(tag, ":") {
-			log.Fatal("masked_tags namespaces should not contain character ':'")
+			log.Fatal("masked_tags namespaces should not contain character ':'", tag)
 		}
 		globals.maskedTagNS[tag] = true
 	}
@@ -412,6 +483,12 @@ func main() {
 	globals.maxTagCount = config.MaxTagCount
 	if globals.maxTagCount <= 0 {
 		globals.maxTagCount = defaultMaxTagCount
+	}
+
+	globals.useXForwardedFor = config.UseXForwardedFor
+	globals.defaultCountryCode = config.DefaultCountryCode
+	if globals.defaultCountryCode == "" {
+		globals.defaultCountryCode = defaultCountryCode
 	}
 
 	if config.Media != nil {
@@ -477,9 +554,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Set up HTTP server. Must use non-default mux because of expvar.
-	mux := http.NewServeMux()
-
 	// Serve static content from the directory in -static_data flag if that's
 	// available, otherwise assume '<path-to-executable>/static'. The content is served at
 	// the path pointed by 'static_mount' in the config. If that is missing then it's
@@ -520,15 +594,31 @@ func main() {
 		log.Println("Static content is disabled")
 	}
 
+	// Configure root path for serving API calls.
+	if *apiPath != "" {
+		config.ApiPath = *apiPath
+	}
+	if config.ApiPath == "" {
+		config.ApiPath = defaultApiPath
+	} else {
+		if !strings.HasPrefix(config.ApiPath, "/") {
+			config.ApiPath = "/" + config.ApiPath
+		}
+		if !strings.HasSuffix(config.ApiPath, "/") {
+			config.ApiPath += "/"
+		}
+	}
+	log.Printf("API served from root URL path '%s'", config.ApiPath)
+
 	// Handle websocket clients.
-	mux.HandleFunc("/v0/channels", serveWebSocket)
+	mux.HandleFunc(config.ApiPath+"v0/channels", serveWebSocket)
 	// Handle long polling clients. Enable compression.
-	mux.Handle("/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
+	mux.Handle(config.ApiPath+"v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
 	if config.Media != nil {
 		// Handle uploads of large files.
-		mux.Handle("/v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileUpload)))
+		mux.Handle(config.ApiPath+"v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileUpload)))
 		// Serve large files.
-		mux.Handle("/v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
+		mux.Handle(config.ApiPath+"v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
 		log.Println("Large media handling enabled", config.Media.UseHandler)
 	}
 
@@ -536,12 +626,6 @@ func main() {
 		// Serve json-formatted 404 for all other URLs
 		mux.HandleFunc("/", serve404)
 	}
-
-	evpath := *expvarPath
-	if evpath == "" {
-		evpath = config.ExpvarPath
-	}
-	statsInit(mux, evpath)
 
 	if err = listenAndServe(config.Listen, mux, tlsConfig, signalHandler()); err != nil {
 		log.Fatal(err)

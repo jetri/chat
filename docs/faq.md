@@ -14,29 +14,45 @@ docker cp name-of-the-container:/var/log/tinode.log ./tinode.log
 
 Alternatively, you can instruct the docker container to save the logs to a directory on the host by mapping a host directory to `/var/log/` in the container. Add `-v /where/to/save/logs:/var/log` to the `docker run` command.
 
-### Q: How to setup FCM push notifications?<br/>
-**A**: If you running the server directly:
+
+### Q: What are the options for enabling push notifications?<br/>
+**A**: You can use Tinode Push Gateway (TNPG) or you can use Google FCM:
+ * _Tinode Push Gateway_ requires minimum configuration changes by sending pushes on behalf of Tinode.
+ * _Google FCM_ does not rely on Tinode infrastructure for pushes but requires you to recompile mobile apps (iOS and Android).
+
+### Q: How to setup push notifications with Tinode Push Gateway?<br/>
+**A**: Enabling TNPG push notifications requires two steps:
+ * register at console.tinode.co and obtain a TNPG token.
+ * configure server with the token.
+See detailed instructions [here](../server/push/tnpg/).
+
+
+### Q: How to setup push notifications with Google FCM?<br/>
+**A**: Enabling FCM push notifications requires the following steps:
+ * enable push sending from the server
+ * enable receiving pushes in the clients
+
+#### Server and TinodeWeb
+
 1. Create a project at https://firebase.google.com/ if you have not done so already.
 2. Follow instructions at https://cloud.google.com/iam/docs/creating-managing-service-account-keys to download the credentials file.
 3. Update the server config [`tinode.conf`](../server/tinode.conf#L255), section `"push"` -> `"name": "fcm"`. Do _ONE_ of the following:
   * _Either_ enter the path to the downloaded credentials file into `"credentials_file"`.
   * _OR_ copy the file contents to `"credentials"`.<br/><br/>
     Remove the other entry. I.e. if you have updated `"credentials_file"`, remove `"credentials"` and vice versa.
-4. Update [TinodeWeb](/tinode/webapp/) config [`firebase-init.js`](https://github.com/tinode/webapp/blob/master/firebase-init.js): update `messagingSenderId` and `messagingVapidKey`. See more info at https://github.com/tinode/webapp/#push_notifications
-5. If you are using an Android client, add `google-services.json` to [Tindroid](/tinode/tindroid/) by following instructions at https://developers.google.com/android/guides/google-services-plugin and recompile the client. See more info at https://github.com/tinode/tindroid/#push_notifications
-6. If you are using an iOS client, add `GoogleService-Info.plist` to [Tinodios](/tinode/ios/) by following instructions at https://firebase.google.com/docs/cloud-messaging/ios/client) and recompile the client. See more info at https://github.com/tinode/ios/#push_notifications
+4. Update [TinodeWeb](/tinode/webapp/) config [`firebase-init.js`](https://github.com/tinode/webapp/blob/master/firebase-init.js): update `apiKey`, `messagingSenderId`, `projectId`, `appId`, `messagingVapidKey`. See more info at https://github.com/tinode/webapp/#push_notifications
 
-If you are using the [Docker image](https://hub.docker.com/u/tinode):
-1. Create a project at https://firebase.google.com/ if you have not done so already.
-2. Follow instructions at https://cloud.google.com/iam/docs/creating-managing-service-account-keys to download the credentials file.
-3. Follow instructions in the Docker [README](../docker#enable-push-notifications) to enable push notifications for the `TinodeWeb`.
-4. Add `google-services.json` to [Tindroid](/tinode/tindroid/#push_notifications), `GoogleService-Info.plist` to [Tinodios](/tinode/ios/#push_notifications), recompile the apps.
+#### iOS and Android
+1. If you are using an Android client, add `google-services.json` to [Tindroid](/tinode/tindroid/) by following instructions at https://developers.google.com/android/guides/google-services-plugin and recompile the client. You may also optionally submit it to Google Play Store.
+See more info at https://github.com/tinode/tindroid/#push_notifications
+2. If you are using an iOS client, add `GoogleService-Info.plist` to [Tinodios](/tinode/ios/) by following instructions at https://firebase.google.com/docs/cloud-messaging/ios/client) and recompile the client. You may optionally submit the app to Apple AppStore.
+See more info at https://github.com/tinode/ios/#push_notifications
 
 
-### Q: How can new users be added to Tinode?
+### Q: How to add new users?<br/>
 **A**: There are three ways to create accounts:
-* A user can create a new account using client-side UI.
-* A new account can be created using [tn-cli](../tn-cli/) (`acc` command). The process can be scripted.
+* A user can create a new account using one of the applications (web, Android, iOS).
+* A new account can be created using [tn-cli](../tn-cli/) (`acc` command or `useradd` macro). The process can be scripted.
 * If the user already exists in an external database, the Tinode account can be automatically created on the first login using the [rest authenticator](../server/auth/rest/).
 
 
@@ -48,6 +64,11 @@ r.db("tinode").table("auth").get("basic:login-of-the-user-to-make-root").update(
 ```
 * MySQL:
 ```sql
+USE 'tinode';
 UPDATE auth SET authlvl=30 WHERE uname='basic:login-of-the-user-to-make-root';
 ```
 The test database has a stock user `xena` which has root access.
+
+
+### Q: Once the number of connection reaches about 1000 per node, all kinds of problems start. Is this a bug?<br/>
+**A**: It is likely not a bug. To ensure good server performance Linux limits the total number of open file descriptors (live network connections, open files) for each process at the kernel level. The default limit is usually 1024. There are other possible restrictions on the number of file descriptors. The problems you are experiencing are likely caused by exceeding one of the Linux-imposed limits. Please seek assistance of a system administrator.

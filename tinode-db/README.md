@@ -1,6 +1,6 @@
-# Utility to Create and initialize `tinode` DB in a RethinkDB or MySQL
+# Utility to initialize or upgrade `tinode` DB
 
-This utility initializes the `tinode` database and optionally loads it with sample data. If the tool finds that the database already exists and of the same version as the expected, it won't do anything. To force database reset use command line option `--reset=true`.
+This utility initializes the `tinode` database (or upgrades an existing DB from an earlier version) and optionally loads it with data. To force database reset use command line option `--reset=true`.
 
 ## Build the package:
 
@@ -10,6 +10,9 @@ This utility initializes the `tinode` database and optionally loads it with samp
  - **MySQL**
   `go build -tags mysql` or `go build -i -tags mysql` to automatically install missing dependencies.
 
+ - **MongoDB**
+  `go build -tags mongodb` or `go build -i -tags mongodb` to automatically install missing dependencies.
+
 
 ## Run
 
@@ -18,17 +21,19 @@ Run from the command line.
 `tinode-db [parameters]`
 
 Command line parameters:
- - `--reset`: delete the database then re-create it in a blank state. Has no effect if the database does not exist.
+ - `--reset`: delete the database then re-create it in a blank state; it has no effect if the database does not exist.
+ - `--upgrade`: upgrade database from an earlier version retaining all the data; make sure to backup the DB before upgrading.
  - `--data=FILENAME`: fill `tinode` database with data from the provided file. See [data.json](data.json).
  - `--config=FILENAME`: load configuration from FILENAME. Example config is included as [tinode.conf](tinode.conf).
- 
+
 
 Configuration file options:
  - `uid_key` is a base64-encoded 16 byte XTEA encryption key to (weakly) encrypt object IDs so they don't appear sequential. You probably want to use your own key in production.
  - `store_config.adapters.mysql` and `store_config.adapters.rethinkdb` are database-specific sections:
   - `database` is the name of the database to generate.
-  - `addresses` is RethinkDB's host and port number to connect to. An array of hosts can be provided as well `["host1", "host2"]`.
+  - `addresses` is RethinkDB/MongoDB's host and port number to connect to. An array of hosts can be provided as well `["host1", "host2"]`.
   - `dsn` is MySQL's Data Source Name.
+  - `replica_set` is MongoDB's Replicaset name.
 
 The `uid_key` is only used if the sample data is being loaded. It should match the key of a production server and should be kept private.
 
@@ -40,3 +45,4 @@ Avatar photos curtesy of https://www.pexels.com/ under [CC0 license](https://www
 
 * [RethinkDB schema](https://github.com/tinode/chat/tree/master/server/db/rethinkdb/schema.md)
 * [MySQL schema](https://github.com/tinode/chat/tree/master/server/db/mysql/schema.sql)
+* [MongoDB schema](https://github.com/tinode/chat/tree/master/server/db/mongodb/schema.md)

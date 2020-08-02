@@ -1,3 +1,4 @@
+// Package types provides data types for persisting objects in the databases.
 package types
 
 import (
@@ -81,9 +82,9 @@ func (uid Uid) Compare(u2 Uid) int {
 }
 
 // MarshalBinary converts Uid to byte slice.
-func (uid *Uid) MarshalBinary() ([]byte, error) {
+func (uid Uid) MarshalBinary() ([]byte, error) {
 	dst := make([]byte, 8)
-	binary.LittleEndian.PutUint64(dst, uint64(*uid))
+	binary.LittleEndian.PutUint64(dst, uint64(uid))
 	return dst, nil
 }
 
@@ -214,7 +215,7 @@ func (us UidSlice) find(uid Uid) (int, bool) {
 	return idx, idx < l && us[idx] == uid
 }
 
-// Add uid to UidSlice keeping it sorted.
+// Add uid to UidSlice keeping it sorted. Duplicates are ignored.
 func (us *UidSlice) Add(uid Uid) bool {
 	idx, found := us.find(uid)
 	if found {
@@ -297,11 +298,12 @@ func ParseP2P(p2p string) (uid1, uid2 Uid, err error) {
 
 // ObjHeader is the header shared by all stored objects.
 type ObjHeader struct {
-	Id        string // using string to get around rethinkdb's problems with unit64
+	// using string to get around rethinkdb's problems with uint64;
+	// `bson:"_id"` tag is for mongodb to use as primary key '_id'.
+	Id        string `bson:"_id"`
 	id        Uid
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	DeletedAt *time.Time `json:"DeletedAt,omitempty"`
 }
 
 // Uid assigns Uid header field.
@@ -329,7 +331,6 @@ func (h *ObjHeader) InitTimes() {
 		h.CreatedAt = TimeNow()
 	}
 	h.UpdatedAt = h.CreatedAt
-	h.DeletedAt = nil
 }
 
 // MergeTimes intelligently copies time.Time variables from h2 to h.
@@ -342,15 +343,6 @@ func (h *ObjHeader) MergeTimes(h2 *ObjHeader) {
 	if h.UpdatedAt.Before(h2.UpdatedAt) {
 		h.UpdatedAt = h2.UpdatedAt
 	}
-	// Set deleted time to the latest value
-	if h2.DeletedAt != nil && (h.DeletedAt == nil || h.DeletedAt.Before(*h2.DeletedAt)) {
-		h.DeletedAt = h2.DeletedAt
-	}
-}
-
-// IsDeleted returns true if the object is deleted.
-func (h *ObjHeader) IsDeleted() bool {
-	return h.DeletedAt != nil
 }
 
 // StringSlice is defined so Scanner and Valuer can be attached to it.
@@ -358,6 +350,9 @@ type StringSlice []string
 
 // Scan implements sql.Scanner interface.
 func (ss *StringSlice) Scan(val interface{}) error {
+	if val == nil {
+		return nil
+	}
 	return json.Unmarshal(val.([]byte), ss)
 }
 
@@ -366,11 +361,92 @@ func (ss StringSlice) Value() (driver.Value, error) {
 	return json.Marshal(ss)
 }
 
+// ObjState represents information on objects state,
+// such as an indication that User or Topic is suspended/soft-deleted.
+type ObjState int
+
+const (
+	// StateOK indicates normal user or topic.
+	StateOK ObjState = 0
+	// StateSuspended indicates suspended user or topic.
+	StateSuspended ObjState = 10
+	// StateDeleted indicates soft-deleted user or topic.
+	StateDeleted ObjState = 20
+	// StateUndefined indicates state which has not been set explicitly.
+	StateUndefined ObjState = 30
+)
+
+// String returns string representation of ObjState.
+func (os ObjState) String() string {
+	switch os {
+	case StateOK:
+		return "ok"
+	case StateSuspended:
+		return "susp"
+	case StateDeleted:
+		return "del"
+	case StateUndefined:
+		return "undef"
+	}
+	return ""
+}
+
+// NewObjState parses string into an ObjState.
+func NewObjState(in string) (ObjState, error) {
+	in = strings.ToLower(in)
+	switch in {
+	case "", "ok":
+		return StateOK, nil
+	case "susp":
+		return StateSuspended, nil
+	case "del":
+		return StateDeleted, nil
+	case "undef":
+		return StateUndefined, nil
+	}
+	// This is the default.
+	return StateOK, errors.New("failed to parse object state")
+}
+
+// MarshalJSON converts ObjState to a quoted string.
+func (os ObjState) MarshalJSON() ([]byte, error) {
+	return append(append([]byte{'"'}, []byte(os.String())...), '"'), nil
+}
+
+// UnmarshalJSON reads ObjState from a quoted string.
+func (os *ObjState) UnmarshalJSON(b []byte) error {
+	if b[0] != '"' || b[len(b)-1] != '"' {
+		return errors.New("syntax error")
+	}
+	state, err := NewObjState(string(b[1 : len(b)-1]))
+	if err == nil {
+		*os = state
+	}
+	return err
+}
+
+// Scan is an implementation of sql.Scanner interface. It expects the
+// value to be a byte slice representation of an ASCII string.
+func (os *ObjState) Scan(val interface{}) error {
+	switch intval := val.(type) {
+	case int64:
+		*os = ObjState(intval)
+		return nil
+	}
+	return errors.New("data is not an int64")
+}
+
+// Value is an implementation of sql.driver.Valuer interface.
+func (os ObjState) Value() (driver.Value, error) {
+	return int64(os), nil
+}
+
 // User is a representation of a DB-stored user record.
 type User struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
 
-	State int
+	State   ObjState
+	StateAt *time.Time `json:"StateAt,omitempty" bson:",omitempty"`
 
 	// Default access to user for P2P topics (used as default modeGiven)
 	Access DefaultAccess
@@ -389,7 +465,9 @@ type User struct {
 	Tags StringSlice
 
 	// Info on known devices, used for push notifications
-	Devices map[string]*DeviceDef
+	Devices map[string]*DeviceDef `bson:"__devices,skip,omitempty"`
+	// Same for mongodb scheme. Ignore in other db backends if its not suitable.
+	DeviceArray []*DeviceDef `json:"-" bson:"devices"`
 }
 
 // AccessMode is a definition of access mode bits.
@@ -422,6 +500,8 @@ const (
 	ModeCAuth AccessMode = ModeCP2P | ModeCPublic
 	// Read-only access to topic ("JR", 3)
 	ModeCReadOnly = ModeJoin | ModeRead
+	// Access to 'sys' topic by a root user ("JRWPD", 79, 0x4F)
+	ModeCSys = ModeJoin | ModeRead | ModeWrite | ModePres | ModeDelete
 
 	// Admin: user who can modify access mode ("OA", dec: 144, hex: 0x90)
 	ModeCAdmin = ModeOwner | ModeApprove
@@ -455,9 +535,8 @@ func (m AccessMode) MarshalText() ([]byte, error) {
 	return res, nil
 }
 
-// UnmarshalText parses access mode string as byte slice.
-// Does not change the mode if the string is empty or invalid.
-func (m *AccessMode) UnmarshalText(b []byte) error {
+// ParseAcs parses AccessMode from a byte array.
+func ParseAcs(b []byte) (AccessMode, error) {
 	m0 := ModeUnset
 
 Loop:
@@ -483,8 +562,19 @@ Loop:
 			m0 = ModeNone // N means explicitly no access, all bits cleared
 			break Loop
 		default:
-			return errors.New("AccessMode: invalid character '" + string(b[i]) + "'")
+			return ModeUnset, errors.New("AccessMode: invalid character '" + string(b[i]) + "'")
 		}
+	}
+
+	return m0, nil
+}
+
+// UnmarshalText parses access mode string as byte slice.
+// Does not change the mode if the string is empty or invalid.
+func (m *AccessMode) UnmarshalText(b []byte) error {
+	m0, err := ParseAcs(b)
+	if err != nil {
+		return err
 	}
 
 	if m0 != ModeUnset {
@@ -574,6 +664,60 @@ func (o AccessMode) Delta(n AccessMode) string {
 	return added + removed
 }
 
+// ApplyMutation sets of modifies access mode:
+// * if `mutation` contains either '+' or '-', attempts to apply a delta change on `m`.
+// * otherwise, treats it as an assignment.
+func (m *AccessMode) ApplyMutation(mutation string) error {
+	if mutation == "" {
+		return nil
+	}
+	if strings.ContainsAny(mutation, "+-") {
+		return m.ApplyDelta(mutation)
+	}
+	return m.UnmarshalText([]byte(mutation))
+}
+
+// ApplyDelta applies the acs delta to AccessMode.
+// Delta is in the same format as generated by AccessMode.Delta.
+// E.g. JPRA.ApplyDelta(-PR+W) -> JWA.
+func (m *AccessMode) ApplyDelta(delta string) error {
+	if delta == "" || delta == "N" {
+		// No updates.
+		return nil
+	}
+	m0 := *m
+	for next := 0; next+1 < len(delta) && next >= 0; {
+		ch := delta[next]
+		end := strings.IndexAny(delta[next+1:], "+-")
+		var chunk string
+		if end >= 0 {
+			end += next + 1
+			chunk = delta[next+1 : end]
+		} else {
+			chunk = delta[next+1:]
+		}
+		next = end
+		upd, err := ParseAcs([]byte(chunk))
+		if err != nil {
+			return err
+		}
+		switch ch {
+		case '+':
+			if upd != ModeUnset {
+				m0 |= upd & ModeBitmask
+			}
+		case '-':
+			if upd != ModeUnset {
+				m0 &^= upd & ModeBitmask
+			}
+		default:
+			return errors.New("Invalid acs delta string: '" + delta + "'")
+		}
+	}
+	*m = m0
+	return nil
+}
+
 // IsJoiner checks if joiner flag J is set.
 func (m AccessMode) IsJoiner() bool {
 	return m&ModeJoin != 0
@@ -654,7 +798,7 @@ func (da DefaultAccess) Value() (driver.Value, error) {
 
 // Credential hold data needed to validate and check validity of a credential like email or phone.
 type Credential struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
 	// Credential owner
 	User string
 	// Verification method (email, tel, captcha, etc)
@@ -671,11 +815,12 @@ type Credential struct {
 
 // Subscription to a topic
 type Subscription struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
 	// User who has relationship with the topic
 	User string
 	// Topic subscribed to
-	Topic string
+	Topic     string
+	DeletedAt *time.Time `bson:",omitempty"`
 
 	// Values persisted through subscription soft-deletion
 
@@ -701,7 +846,7 @@ type Subscription struct {
 	// deserialized SeqID from user or topic
 	seqId int
 	// Deserialized TouchedAt from topic
-	touchedAt *time.Time
+	touchedAt time.Time
 	// timestamp when the user was last online
 	lastSeen time.Time
 	// user agent string of the last online access
@@ -711,6 +856,9 @@ type Subscription struct {
 	with string
 	// P2P only. Default access: this is the mode given by the other user to this user
 	modeDefault *DefaultAccess
+
+	// Topic's or user's state.
+	state ObjState
 }
 
 // SetPublic assigns to public, otherwise not accessible from outside the package.
@@ -734,18 +882,18 @@ func (s *Subscription) GetWith() string {
 }
 
 // GetTouchedAt returns touchedAt.
-func (s *Subscription) GetTouchedAt() *time.Time {
+func (s *Subscription) GetTouchedAt() time.Time {
 	return s.touchedAt
 }
 
 // SetTouchedAt sets the value of touchedAt.
-func (s *Subscription) SetTouchedAt(touchedAt *time.Time) {
-	if s.touchedAt == nil || touchedAt.After(*s.touchedAt) {
+func (s *Subscription) SetTouchedAt(touchedAt time.Time) {
+	if touchedAt.After(s.touchedAt) {
 		s.touchedAt = touchedAt
 	}
 
 	if s.touchedAt.Before(s.UpdatedAt) {
-		s.touchedAt = &s.UpdatedAt
+		s.touchedAt = s.UpdatedAt
 	}
 }
 
@@ -787,6 +935,16 @@ func (s *Subscription) GetDefaultAccess() *DefaultAccess {
 	return s.modeDefault
 }
 
+// GetState returns topic's or user's state.
+func (s *Subscription) GetState() ObjState {
+	return s.state
+}
+
+// SetState assigns topic's or user's state.
+func (s *Subscription) SetState(state ObjState) {
+	s.state = state
+}
+
 // Contact is a result of a search for connections
 type Contact struct {
 	Id       string
@@ -804,10 +962,14 @@ type perUserData struct {
 
 // Topic stored in database. Topic's name is Id
 type Topic struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
+
+	// State of the topic: normal (ok), suspended, deleted
+	State   ObjState
+	StateAt *time.Time `json:"StateAt,omitempty" bson:",omitempty"`
 
 	// Timestamp when the last message has passed through the topic
-	TouchedAt *time.Time
+	TouchedAt time.Time
 
 	// Use bearer token or use ACL
 	UseBt bool
@@ -912,16 +1074,18 @@ func (mh MessageHeaders) Value() (driver.Value, error) {
 
 // Message is a stored {data} message
 type Message struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
+	DeletedAt *time.Time `json:"DeletedAt,omitempty" bson:",omitempty"`
+
 	// ID of the hard-delete operation
-	DelId int `json:"DelId,omitempty"`
+	DelId int `json:"DelId,omitempty" bson:",omitempty"`
 	// List of users who have marked this message as soft-deleted
-	DeletedFor []SoftDelete `json:"DeletedFor,omitempty"`
+	DeletedFor []SoftDelete `json:"DeletedFor,omitempty" bson:",omitempty"`
 	SeqId      int
 	Topic      string
 	// Sender's user ID as string (without 'usr' prefix), could be empty.
 	From    string
-	Head    MessageHeaders `json:"Head,omitempty"`
+	Head    MessageHeaders `json:"Head,omitempty" bson:",omitempty"`
 	Content interface{}
 }
 
@@ -929,7 +1093,7 @@ type Message struct {
 // If the range contains just one ID, Hi is set to 0
 type Range struct {
 	Low int
-	Hi  int `json:"Hi,omitempty"`
+	Hi  int `json:"Hi,omitempty" bson:",omitempty"`
 }
 
 // RangeSorter is a helper type required by 'sort' package.
@@ -989,7 +1153,7 @@ func (rs RangeSorter) Normalize() RangeSorter {
 
 // DelMessage is a log entry of a deleted message range.
 type DelMessage struct {
-	ObjHeader
+	ObjHeader   `bson:",inline"`
 	Topic       string
 	DeletedFor  string
 	DelId       int
@@ -1021,6 +1185,8 @@ const (
 	TopicCatP2P
 	// TopicCatGrp is a a value denoting group topic.
 	TopicCatGrp
+	// TopicCatSys is a constant indicating a system topic.
+	TopicCatSys
 )
 
 // GetTopicCat given topic name returns topic category.
@@ -1034,6 +1200,8 @@ func GetTopicCat(name string) TopicCat {
 		return TopicCatGrp
 	case "fnd":
 		return TopicCatFnd
+	case "sys":
+		return TopicCatSys
 	default:
 		panic("invalid topic type for name '" + name + "'")
 	}
@@ -1064,7 +1232,7 @@ const (
 
 // FileDef is a stored record of a file upload
 type FileDef struct {
-	ObjHeader
+	ObjHeader `bson:",inline"`
 	// Status of upload
 	Status int
 	// User who created the file
@@ -1075,4 +1243,13 @@ type FileDef struct {
 	Size int64
 	// Internal file location, i.e. path on disk or an S3 blob address.
 	Location string
+}
+
+// FlattenDoubleSlice turns 2d slice into a 1d slice.
+func FlattenDoubleSlice(data [][]string) []string {
+	var result []string
+	for _, el := range data {
+		result = append(result, el...)
+	}
+	return result
 }

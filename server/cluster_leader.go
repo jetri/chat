@@ -142,6 +142,7 @@ func (c *Cluster) Vote(vreq *ClusterVoteRequest, response *ClusterVoteResponse) 
 	return nil
 }
 
+// Cluster leader checks health of other nodes.
 func (c *Cluster) sendPings() {
 	rehash := false
 
@@ -169,16 +170,16 @@ func (c *Cluster) sendPings() {
 	}
 
 	if rehash {
-		var activeNodes []string
+		activeNodes := []string{c.thisNodeName}
 		for _, node := range c.nodes {
 			if node.failCount < c.fo.nodeFailCountLimit {
 				activeNodes = append(activeNodes, node.name)
 			}
 		}
-		activeNodes = append(activeNodes, c.thisNodeName)
-
 		c.fo.activeNodes = activeNodes
 		c.rehash(activeNodes)
+		c.invalidateProxySubs()
+		c.garbageCollectProxySessions(activeNodes)
 
 		log.Println("cluster: initiating failover rehash for nodes", activeNodes)
 		globals.hub.rehash <- true
@@ -189,6 +190,9 @@ func (c *Cluster) electLeader() {
 	// Increment the term (voting for myself in this term) and clear the leader
 	c.fo.term++
 	c.fo.leader = ""
+
+	// Make sure the current node does not report itself as a leader.
+	statsSet("ClusterLeader", 0)
 
 	log.Println("cluster: leading new election for term", c.fo.term)
 
@@ -234,9 +238,10 @@ func (c *Cluster) electLeader() {
 	}
 
 	if voteCount >= expectVotes {
-		// Current node elected as the leader
+		// Current node elected as the leader.
 		c.fo.leader = c.thisNodeName
-		log.Println("Elected myself as a new leader")
+		statsSet("ClusterLeader", 1)
+		log.Printf("'%s' elected self as a new leader", c.thisNodeName)
 	}
 }
 
@@ -245,8 +250,9 @@ func (c *Cluster) run() {
 
 	ticker := time.NewTicker(c.fo.heartBeat)
 
+	// Count of missed pings from the leader.
 	missed := 0
-	// Don't rehash immediately on the first ping. If this node just came onlyne, leader will
+	// Don't rehash immediately on the first ping. If this node just came online, leader will
 	// account it on the next ping. Otherwise it will be rehashing twice.
 	rehashSkipped := false
 
@@ -257,9 +263,11 @@ func (c *Cluster) run() {
 				// I'm the leader, send pings
 				c.sendPings()
 			} else {
+				// Increment the number of missed pings from the leader.
+				// The counter will be reset to zero when the ping is received.
 				missed++
 				if missed >= c.fo.voteTimeout {
-					// Elect the leader
+					// Leader is gone, initiate election of a new leader.
 					missed = 0
 					c.electLeader()
 				}
@@ -288,12 +296,17 @@ func (c *Cluster) run() {
 				c.fo.leader = ping.Leader
 			}
 
+			// This ping is from a leader, consequently this node is not the leader.
+			statsSet("ClusterLeader", 0)
+
 			missed = 0
 			if ping.Signature != c.ring.Signature() {
 				if rehashSkipped {
 					log.Println("cluster: rehashing at a request of",
 						ping.Leader, ping.Nodes, ping.Signature, c.ring.Signature())
 					c.rehash(ping.Nodes)
+					c.invalidateProxySubs()
+					c.garbageCollectProxySessions(ping.Nodes)
 					rehashSkipped = false
 
 					globals.hub.rehash <- true
@@ -309,6 +322,8 @@ func (c *Cluster) run() {
 				log.Printf("Voting YES for %s, my term %d, vote term %d", vreq.req.Node, c.fo.term, vreq.req.Term)
 				c.fo.term = vreq.req.Term
 				c.fo.leader = ""
+				// Election means these is no leader yet.
+				statsSet("ClusterLeader", 0)
 				vreq.resp <- ClusterVoteResponse{Result: true, Term: c.fo.term}
 			} else {
 				// This node has voted already or stale election, reject.

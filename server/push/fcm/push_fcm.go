@@ -1,3 +1,7 @@
+// Package fcm implements push notification plugin for Google FCM backend.
+// Push notifications for Android, iOS and web clients are sent through Google's Firebase Cloud Messaging service.
+// Package fcm is push notification plugin using Google FCM.
+// https://firebase.google.com/docs/cloud-messaging
 package fcm
 
 import (
@@ -5,16 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"strconv"
-	"time"
 
 	fbase "firebase.google.com/go"
 	fcm "firebase.google.com/go/messaging"
 
-	"github.com/tinode/chat/server/drafty"
 	"github.com/tinode/chat/server/push"
 	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
 
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
@@ -22,8 +22,13 @@ import (
 
 var handler Handler
 
-// Size of the input channel buffer.
-const defaultBuffer = 32
+const (
+	// Size of the input channel buffer.
+	bufferSize = 1024
+
+	// Maximum length of a text message in runes
+	maxMessageLength = 80
+)
 
 // Handler represents the push handler; implements push.PushHandler interface.
 type Handler struct {
@@ -33,14 +38,11 @@ type Handler struct {
 }
 
 type configType struct {
-	Enabled                    bool            `json:"enabled"`
-	Buffer                     int             `json:"buffer"`
-	Credentials                json.RawMessage `json:"credentials"`
-	CredentialsFile            string          `json:"credentials_file"`
-	TimeToLive                 uint            `json:"time_to_live,omitempty"`
-	IncludeAndroidNotification bool            `json:"include_android_notification,omitempty"`
-	Icon                       string          `json:"icon,omitempty"`
-	IconColor                  string          `json:"icon_color,omitempty"`
+	Enabled         bool            `json:"enabled"`
+	Credentials     json.RawMessage `json:"credentials"`
+	CredentialsFile string          `json:"credentials_file"`
+	TimeToLive      uint            `json:"time_to_live,omitempty"`
+	Android         AndroidConfig   `json:"android,omitempty"`
 }
 
 // Init initializes the push handler
@@ -81,11 +83,7 @@ func (Handler) Init(jsonconf string) error {
 		return err
 	}
 
-	if config.Buffer <= 0 {
-		config.Buffer = defaultBuffer
-	}
-
-	handler.input = make(chan *push.Receipt, config.Buffer)
+	handler.input = make(chan *push.Receipt, bufferSize)
 	handler.stop = make(chan bool, 1)
 
 	go func() {
@@ -102,138 +100,40 @@ func (Handler) Init(jsonconf string) error {
 	return nil
 }
 
-func payloadToData(pl *push.Payload) (map[string]string, error) {
-	if pl == nil {
-		return nil, nil
-	}
-
-	data := make(map[string]string)
-	var err error
-	data["topic"] = pl.Topic
-	// Must use "xfrom" because "from" is a reserved word.
-	// Google did not bother to document it anywhere.
-	data["xfrom"] = pl.From
-	data["ts"] = pl.Timestamp.Format(time.RFC3339Nano)
-	data["seq"] = strconv.Itoa(pl.SeqId)
-	data["mime"] = pl.ContentType
-	data["content"], err = drafty.ToPlainText(pl.Content)
-	if err != nil {
-		return nil, err
-	}
-
-	// Trim long strings to 80 runes.
-	// Check byte length first and don't waste time converting short strings.
-	if len(data["content"]) > 80 {
-		runes := []rune(data["content"])
-		if len(runes) > 80 {
-			data["content"] = string(runes[:80]) + "…"
-		}
-	}
-
-	return data, nil
-}
-
 func sendNotifications(rcpt *push.Receipt, config *configType) {
 	ctx := context.Background()
-
-	data, _ := payloadToData(&rcpt.Payload)
-	if data == nil || data["content"] == "" {
-		log.Println("fcm push: could not parse payload or empty payload")
+	messages := PrepareNotifications(rcpt, &config.Android)
+	if messages == nil {
 		return
 	}
 
-	// List of UIDs for querying the database
-	uids := make([]t.Uid, len(rcpt.To))
-	skipDevices := make(map[string]bool)
-	i := 0
-	for uid, to := range rcpt.To {
-		uids[i] = uid
-		i++
+	for _, m := range messages {
+		_, err := handler.client.Send(ctx, m.Message)
+		if err != nil {
+			if fcm.IsMessageRateExceeded(err) ||
+				fcm.IsServerUnavailable(err) ||
+				fcm.IsInternal(err) ||
+				fcm.IsUnknown(err) {
+				// Transient errors. Stop sending this batch.
+				log.Println("fcm transient failure", err)
+				return
+			}
 
-		// Some devices were online and received the message. Skip them.
-		for _, deviceID := range to.Devices {
-			skipDevices[deviceID] = true
-		}
-	}
+			if fcm.IsMismatchedCredential(err) || fcm.IsInvalidArgument(err) {
+				// Config errors
+				log.Println("fcm push: failed", err)
+				return
+			}
 
-	devices, count, err := store.Devices.GetAll(uids...)
-	if err != nil {
-		log.Println("fcm push: db error", err)
-		return
-	}
-	if count == 0 {
-		return
-	}
-
-	for uid, devList := range devices {
-		for i := range devList {
-			d := &devList[i]
-			if _, ok := skipDevices[d.DeviceId]; !ok && d.DeviceId != "" {
-				msg := fcm.Message{
-					Token: d.DeviceId,
-					Data:  data,
-				}
-
-				if d.Platform == "android" {
-					msg.Android = &fcm.AndroidConfig{
-						Priority: "high",
-					}
-					if config.IncludeAndroidNotification {
-						msg.Android.Notification = &fcm.AndroidNotification{
-							Title: "New message",
-							Body:  data["content"],
-							Icon:  config.Icon,
-							Color: config.IconColor,
-						}
-					}
-				} else if d.Platform == "ios" {
-					// iOS uses Badge to show the total unread message count.
-					badge := rcpt.To[uid].Unread
-					msg.APNS = &fcm.APNSConfig{
-						Payload: &fcm.APNSPayload{
-							Aps: &fcm.Aps{Badge: &badge},
-						},
-					}
-					msg.Notification = &fcm.Notification{
-						Title: "New message",
-						Body:  data["content"],
-					}
-				}
-
-				// Firebase messaging is buggy and poorly documented. If
-				// msg.Notification is defined, then firebase will ignore
-				// whatever handler is set in setBackgroundMessageHandler.
-				// See dicussion of this madness here:
-				// https://github.com/firebase/quickstart-js/issues/71
-				// msg.Notification = &fcm.Notification{
-				//	 Title: "New message",
-				//	 Body:  data["content"],
-				// }
-				_, err := handler.client.Send(ctx, &msg)
+			if fcm.IsRegistrationTokenNotRegistered(err) {
+				// Token is no longer valid.
+				log.Println("fcm push: invalid token", err)
+				err = store.Devices.Delete(m.Uid, m.DeviceId)
 				if err != nil {
-					if fcm.IsMessageRateExceeded(err) ||
-						fcm.IsServerUnavailable(err) ||
-						fcm.IsInternal(err) ||
-						fcm.IsUnknown(err) {
-						// Transient errors. Stop sending this batch.
-						log.Println("fcm transient failure", err)
-						return
-					}
-
-					if fcm.IsMismatchedCredential(err) || fcm.IsInvalidArgument(err) {
-						// Config errors
-						log.Println("fcm push: failed", err)
-						return
-					}
-
-					if fcm.IsRegistrationTokenNotRegistered(err) {
-						// Token is no longer valid.
-						store.Devices.Delete(uid, d.DeviceId)
-						log.Println("fcm push: invalid token", err)
-					} else {
-						log.Println("fcm push:", err)
-					}
+					log.Println("fcm push: failed to delete invalid token", err)
 				}
+			} else {
+				log.Println("fcm push:", err)
 			}
 		}
 	}
@@ -244,7 +144,7 @@ func (Handler) IsReady() bool {
 	return handler.input != nil
 }
 
-// Push return a channel that the server will use to send messages to.
+// Push returns a channel that the server will use to send messages to.
 // If the adapter blocks, the message will be dropped.
 func (Handler) Push() chan<- *push.Receipt {
 	return handler.input

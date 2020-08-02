@@ -1,6 +1,5 @@
+// Package push contains interfaces to be implemented by push notification plugins.
 package push
-
-// Interfaces for push notifications
 
 import (
 	"encoding/json"
@@ -8,6 +7,14 @@ import (
 	"time"
 
 	t "github.com/tinode/chat/server/store/types"
+)
+
+// Push actions
+const (
+	// New message.
+	ActMsg = "msg"
+	// New subscription.
+	ActSub = "sub"
 )
 
 // Recipient is a user targeted by the push.
@@ -30,28 +37,46 @@ type Receipt struct {
 
 // Payload is content of the push.
 type Payload struct {
-	Topic       string    `json:"topic"`
-	From        string    `json:"from"`
-	Timestamp   time.Time `json:"ts"`
-	SeqId       int       `json:"seq"`
-	ContentType string    `json:"mime"`
+	// Action type of the push: new message (msg), new subscription (sub), etc.
+	What string `json:"what"`
+	// If this is a silent push: perform action but do not show a notification to the user.
+	Silent bool `json:"silent"`
+	// Topic which was affected by the action.
+	Topic string `json:"topic"`
+	// Timestamp of the action.
+	Timestamp time.Time `json:"ts"`
+
+	// {data} notification.
+
+	// Message sender 'usrXXX'
+	From string `json:"from"`
+	// Sequential ID of the message.
+	SeqId int `json:"seq"`
+	// MIME-Type of the message content, text/x-drafty or text/plain
+	ContentType string `json:"mime"`
 	// Actual Data.Content of the message, if requested
 	Content interface{} `json:"content,omitempty"`
+
+	// New subscription notification
+
+	// Access mode when notifying of new subscriptions.
+	ModeWant  t.AccessMode `json:"want,omitempty"`
+	ModeGiven t.AccessMode `json:"given,omitempty"`
 }
 
 // Handler is an interface which must be implemented by handlers.
 type Handler interface {
-	// Initialize the handler
+	// Init initializes the handler.
 	Init(jsonconf string) error
 
-	// Check if the handler is initialized
+	// IsReady сhecks if the handler is initialized.
 	IsReady() bool
 
 	// Push returns a channel that the server will use to send messages to.
 	// The message will be dropped if the channel blocks.
 	Push() chan<- *Receipt
 
-	// Stop operations
+	// Stop terminates the handler's worker and stops sending pushes.
 	Stop()
 }
 
