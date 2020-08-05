@@ -8,10 +8,10 @@ import (
 
 	fcm "firebase.google.com/go/messaging"
 
-	"github.com/tinode/chat/server/drafty"
-	"github.com/tinode/chat/server/push"
-	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/drafty"
+	"github.com/jetri/chat/server/push"
+	"github.com/jetri/chat/server/store"
+	t "github.com/jetri/chat/server/store/types"
 )
 
 // AndroidConfig is the configuration of AndroidNotification payload.

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/store"
+	t "github.com/jetri/chat/server/store/types"
 	b "go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	mdb "go.mongodb.org/mongo-driver/mongo"

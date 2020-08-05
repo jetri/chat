@@ -1,4 +1,4 @@
-// Package fs implements github.com/tinode/chat/server/media interface by storing media objects in a single
+// Package fs implements github.com/jetri/chat/server/media interface by storing media objects in a single
 // directory in the file system.
 // This module won't perform well with tens of thousand of files because it stores all files in a single directory.
 package fs

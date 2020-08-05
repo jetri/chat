@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tinode/chat/server/store/types"
+	"github.com/jetri/chat/server/store/types"
 )
 
 func (t *Topic) runProxy(hub *Hub) {

@@ -12,12 +12,14 @@ require (
 	github.com/google/go-cmp v0.4.0
 	github.com/gorilla/handlers v1.4.2
 	github.com/gorilla/websocket v1.4.2
+	github.com/jetri/chat v0.15.14
+	github.com/jetri/snowflake v0.0.0-20190130120022-eaecc858bed6
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/nyaruka/phonenumbers v1.0.56
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/common v0.9.1
 	github.com/tinode/jsonco v1.0.0
-	github.com/tinode/snowflake v1.0.0
+	github.com/tinode/snowflake v1.0.0 // indirect
 	go.mongodb.org/mongo-driver v1.3.1
 	golang.org/x/crypto v0.0.0-20200320181102-891825fb96df
 	golang.org/x/net v0.0.0-20200320220750-118fecf932d8
