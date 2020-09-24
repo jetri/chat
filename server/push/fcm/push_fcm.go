@@ -11,6 +11,8 @@ import (
 
 	fbase "firebase.google.com/go"
 	fcm "firebase.google.com/go/messaging"
+	"log"
+	"os"
 
 	"github.com/jetri/chat/server/logs"
 	"github.com/jetri/chat/server/push"

@@ -163,5 +163,5 @@ Words 'chat' and 'instant messaging' in Chinese, Russian, Persian and a few othe
 #### Foodry
 Build image
 ```
-./docker-build.sh tag=v0.16.0    
+./docker-build.sh tag=v0.16.7
 ```

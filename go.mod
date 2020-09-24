@@ -1,4 +1,4 @@
-module github.com/tinode/chat
+module github.com/jetri/chat
 
 go 1.14
 
@@ -6,21 +6,19 @@ require (
 	firebase.google.com/go v3.12.0+incompatible
 	github.com/aws/aws-sdk-go v1.29.29
 	github.com/go-sql-driver/mysql v1.5.0
-	github.com/golang/protobuf v1.3.5
-	github.com/google/go-cmp v0.4.0
+	github.com/golang/protobuf v1.4.2
+	github.com/google/go-cmp v0.5.1
 	github.com/gorilla/handlers v1.4.2
 	github.com/gorilla/websocket v1.4.2
-	github.com/jetri/chat v0.15.14
 	github.com/jetri/snowflake v0.0.0-20190130120022-eaecc858bed6
 	github.com/jmoiron/sqlx v1.2.0
-	github.com/nyaruka/phonenumbers v1.0.56
-	github.com/prometheus/client_golang v1.5.1
-	github.com/prometheus/common v0.9.1
+	github.com/nyaruka/phonenumbers v1.0.57
+	github.com/prometheus/client_golang v1.7.1
+	github.com/prometheus/common v0.11.1
 	github.com/tinode/jsonco v1.0.0
-	github.com/tinode/snowflake v1.0.0 // indirect
-	go.mongodb.org/mongo-driver v1.3.1
-	golang.org/x/crypto v0.0.0-20200320181102-891825fb96df
-	golang.org/x/net v0.0.0-20200320220750-118fecf932d8
+	go.mongodb.org/mongo-driver v1.4.0
+	golang.org/x/crypto v0.0.0-20200728195943-123391ffb6de
+	golang.org/x/net v0.0.0-20200707034311-ab3426394381
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	golang.org/x/sys v0.0.0-20200202164722-d101bd2416d5 // indirect
 	golang.org/x/text v0.3.2

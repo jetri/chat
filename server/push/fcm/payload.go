@@ -226,7 +226,7 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 		return nil
 	}
 
-	var titlelc, title, bodylc, body, icon, color, clickAction string
+	var titlelc, title, bodylc, body, icon, color string
 	if config != nil && config.Enabled {
 		titlelc = config.getTitleLocKey(rcpt.Payload.What)
 		title = config.getTitle(rcpt.Payload.What)
@@ -237,7 +237,7 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 		}
 		icon = config.getIcon(rcpt.Payload.What)
 		color = config.getColor(rcpt.Payload.What)
-		clickAction = config.getClickAction(rcpt.Payload.What)
+		//clickAction = config.getClickAction(rcpt.Payload.What)
 	}
 
 	androidNotification := func(msg *fcm.Message) {

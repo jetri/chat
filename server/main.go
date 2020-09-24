@@ -615,7 +615,7 @@ func main() {
 	logs.Info.Printf("API served from root URL path '%s'", config.ApiPath)
 
 	// Health check
-	mux.HandleFunc("/chat/v0/_health", serveHealth)
+	mux.HandleFunc(config.ApiPath+"v0/_health", serveHealth)
 
 	// Handle websocket clients.
 	mux.HandleFunc(config.ApiPath+"v0/channels", serveWebSocket)
