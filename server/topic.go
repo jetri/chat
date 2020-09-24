@@ -697,9 +697,10 @@ func (t *Topic) sendImmediateSubNotifications(asUid types.Uid, sreg *sessionJoin
 			t.presSingleUserOffline(uid2, status, nilPresParams, "", false)
 
 			// Also send a push notification to the other user.
-			if pushRcpt := t.pushForSub(asUid, uid2, pud2.modeWant, pud2.modeGiven, types.TimeNow()); pushRcpt != nil {
-				usersPush(pushRcpt)
-			}
+			// Note: J3 don't send notification for new subs
+			// if pushRcpt := t.pushForSub(asUid, uid2, pud2.modeWant, pud2.modeGiven, types.TimeNow()); pushRcpt != nil {
+			// 	usersPush(pushRcpt)
+			// }
 		}
 	}
 

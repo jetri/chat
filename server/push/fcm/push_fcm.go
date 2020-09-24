@@ -8,13 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
-	"os"
-	"strconv"
-	"time"
-
 	fbase "firebase.google.com/go"
 	fcm "firebase.google.com/go/messaging"
+	"log"
+	"os"
 
 	"github.com/jetri/chat/server/push"
 	"github.com/jetri/chat/server/store"

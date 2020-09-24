@@ -1,6 +1,6 @@
 {
 	"listen": ":6060",
-	"api_path": "/",
+	"api_path": "chat",
 	"cache_control": 39600,
 	"static_mount": "/",
 	"grpc_listen": ":16060",
@@ -122,14 +122,13 @@
 				"time_to_live": 3600,
 				"android": {
 					"enabled": $FCM_INCLUDE_ANDROID_NOTIFICATION,
-					"icon": "ic_logo_push",
-					"icon_color": "#3949AB",
-					"click_action": ".MessageActivity",
+					"icon": "ic_stat_notification",
+					"icon_color": "#ed1c24",
 					"msg": {
 						"title_loc_key": "new_message",
-						"title": "",
+						"title": "New message",
 						"body_loc_key": "",
-						"body": ""
+						"body": "$content"
 					},
 					"sub": {
 						"title_loc_key": "new_chat",

@@ -9,23 +9,24 @@
 #	--env AUTH_TOKEN_KEY=base64+encoded+32+bytes \
 #	tinode-server
 
-FROM alpine:3.11
-# FROM golang:1.11.3-alpine3.8 as build
+#FROM alpine:3.11
+FROM golang:1.14.6-alpine3.12 as build
 
-## Build-time options.
+# Build-time options.
 
-## Database selector. Builds for RethinkDB by default.
-## Alternatively use `--build-arg TARGET_DB=mysql` to build for MySQL.
-# ARG TARGET_DB=rethinkdb
-# ENV TARGET_DB=$TARGET_DB
+# Database selector. Builds for RethinkDB by default.
+# Alternatively use `--build-arg TARGET_DB=mysql` to build for MySQL.
+ARG TARGET_DB=mysql
+ENV TARGET_DB=$TARGET_DB
 
-## Copy the local package files to the container’s workspace.
-# COPY . /go/src/github.com/jetri/chat
+# Copy the local package files to the container’s workspace.
+COPY . /go/src/github.com/jetri/chat
 
-# RUN cd /go/src/github.com/jetri/chat/server && go build -tags $TARGET_DB -o tinode
-# RUN cd /go/src/github.com/jetri/chat/tinode-db && go build -tags $TARGET_DB -o init-db
+RUN cd /go/src/github.com/jetri/chat && go mod tidy
+RUN cd /go/src/github.com/jetri/chat/server && go build -tags $TARGET_DB -o tinode
+RUN cd /go/src/github.com/jetri/chat/tinode-db && go build -tags $TARGET_DB -o init-db
 
-# FROM alpine:latest
+FROM alpine:latest
 
 ARG VERSION=0.16
 ENV VERSION=$VERSION
@@ -131,11 +132,11 @@ RUN apk update && \
 WORKDIR /opt/tinode
 
 # Copy config template to the container.
-COPY config.template .
-COPY entrypoint.sh .
+#COPY config.template .
+#COPY entrypoint.sh .
 
 # Get the desired Tinode build.
-ADD https://github.com/tinode/chat/releases/download/v$BINVERS/tinode-$TARGET_DB.linux-amd64.tar.gz .
+#ADD https://github.com/tinode/chat/releases/download/v$BINVERS/tinode-$TARGET_DB.linux-amd64.tar.gz .
 # ADD https://github.com/tinode/chat/releases/download/v$VERSION/tinode-$TARGET_DB.linux-amd64.tar.gz .
 
 # Unpack the Tinode archive.
@@ -145,11 +146,11 @@ ADD https://github.com/tinode/chat/releases/download/v$BINVERS/tinode-$TARGET_DB
 COPY --from=build /go/src/github.com/jetri/chat/server/tinode /opt/tinode/
 
 ## Copy config template to the container.
-# COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/config.template .
-# COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/entrypoint.sh .
-# COPY --from=build /go/src/github.com/jetri/chat/server/templ /opt/tinode/templ
-# COPY --from=build /go/src/github.com/jetri/chat/tinode-db .
-# COPY --from=build /go/src/github.com/jetri/chat/static /opt/tinode/static
+COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/config.template .
+COPY --from=build /go/src/github.com/jetri/chat/docker/tinode/entrypoint.sh .
+COPY --from=build /go/src/github.com/jetri/chat/server/templ /opt/tinode/templ
+COPY --from=build /go/src/github.com/jetri/chat/tinode-db .
+COPY --from=build /go/src/github.com/jetri/chat/static /opt/tinode/static
 
 ## RUN pwd && ls -lh
 

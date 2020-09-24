@@ -21,7 +21,7 @@ type AndroidConfig struct {
 	androidPayload
 	// Configs for specific push types.
 	Msg androidPayload `json:"msg,omitempty"`
-	Sub androidPayload `json:"msg,omitempty"`
+	Sub androidPayload `json:"sub,omitempty"`
 }
 
 func (ac *AndroidConfig) getTitleLocKey(what string) string {
@@ -211,7 +211,7 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 		return nil
 	}
 
-	var titlelc, title, bodylc, body, icon, color, clickAction string
+	var titlelc, title, bodylc, body, icon, color string
 	if config != nil && config.Enabled {
 		titlelc = config.getTitleLocKey(rcpt.Payload.What)
 		title = config.getTitle(rcpt.Payload.What)
@@ -222,7 +222,7 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 		}
 		icon = config.getIcon(rcpt.Payload.What)
 		color = config.getColor(rcpt.Payload.What)
-		clickAction = config.getClickAction(rcpt.Payload.What)
+		//clickAction = config.getClickAction(rcpt.Payload.What)
 	}
 
 	var messages []MessageData
@@ -245,6 +245,9 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 					msg.Android = &fcm.AndroidConfig{
 						Priority: "high",
 					}
+
+					log.Println("payload platform: ", d.Platform, "config enabled: ", config.Enabled)
+
 					if config != nil && config.Enabled {
 						// When this notification type is included and the app is not in the foreground
 						// Android won't wake up the app and won't call FirebaseMessagingService:onMessageReceived.
@@ -261,12 +264,13 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 							Body:        body,
 							Icon:        icon,
 							Color:       color,
-							ClickAction: clickAction,
+							//ClickAction: clickAction,
 						}
 					}
 				} else if d.Platform == "ios" {
 					// iOS uses Badge to show the total unread message count.
-					badge := rcpt.To[uid].Unread
+					// badge := rcpt.To[uid].Unread
+					badge := 0
 					// Need to duplicate these in APNS.Payload.Aps.Alert so
 					// iOS may call NotificationServiceExtension (if present).
 					title := "New message"
