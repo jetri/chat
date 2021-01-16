@@ -36,7 +36,8 @@ import (
 
 	// Database backends
 	_ "github.com/jetri/chat/server/db/mongodb"
-    _ "github.com/jetri/chat/server/db/mysql"
+	_ "github.com/jetri/chat/server/db/mysql"
+	_ "github.com/jetri/chat/server/db/postgres"
 	_ "github.com/jetri/chat/server/db/rethinkdb"
 
 	// Push notifications
@@ -618,14 +619,14 @@ func main() {
 	// mux.HandleFunc("/chat/v0/channels", serveWebSocket)
 	// Handle long polling clients. Enable compression.
 	mux.Handle(config.ApiPath+"v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
-    // mux.Handle("/chat/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
+	// mux.Handle("/chat/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
 	if config.Media != nil {
 		// Handle uploads of large files.
 		mux.Handle(config.ApiPath+"v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileUpload)))
 		// mux.Handle("/chat/v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileUpload)))
 		// Serve large files.
 		mux.Handle(config.ApiPath+"v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
-        // mux.Handle("/chat/v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
+		// mux.Handle("/chat/v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
 		log.Println("Large media handling enabled", config.Media.UseHandler)
 	}
 

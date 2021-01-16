@@ -13,6 +13,10 @@ require (
 	github.com/google/go-cmp v0.5.1
 	github.com/gorilla/handlers v1.4.2
 	github.com/gorilla/websocket v1.4.2
+	github.com/jackc/fake v0.0.0-20150926172116-812a484cc733 // indirect
+	github.com/jackc/pgconn v1.8.0
+	github.com/jackc/pgx v3.6.2+incompatible
+	github.com/jackc/pgx/v4 v4.10.1
 	github.com/jetri/snowflake v0.0.0-20190130120022-eaecc858bed6
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/nyaruka/phonenumbers v1.0.57

@@ -14,7 +14,9 @@ import (
 
 	_ "github.com/jetri/chat/server/db/mongodb"
 	_ "github.com/jetri/chat/server/db/mysql"
+	_ "github.com/jetri/chat/server/db/postgres"
 	_ "github.com/jetri/chat/server/db/rethinkdb"
+
 	"github.com/jetri/chat/server/store"
 	jcr "github.com/tinode/jsonco"
 )
