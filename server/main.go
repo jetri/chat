@@ -35,7 +35,8 @@ import (
 
 	// Database backends
 	_ "github.com/jetri/chat/server/db/mongodb"
-    _ "github.com/jetri/chat/server/db/mysql"
+	_ "github.com/jetri/chat/server/db/mysql"
+	_ "github.com/jetri/chat/server/db/postgres"
 	_ "github.com/jetri/chat/server/db/rethinkdb"
 
 	"github.com/tinode/chat/server/logs"
@@ -622,7 +623,7 @@ func main() {
 	// mux.HandleFunc("/chat/v0/channels", serveWebSocket)
 	// Handle long polling clients. Enable compression.
 	mux.Handle(config.ApiPath+"v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
-    // mux.Handle("/chat/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
+	// mux.Handle("/chat/v0/channels/lp", gh.CompressHandler(http.HandlerFunc(serveLongPoll)))
 	if config.Media != nil {
 		// Handle uploads of large files.
 		mux.Handle(config.ApiPath+"v0/file/u/", gh.CompressHandler(http.HandlerFunc(largeFileReceive)))

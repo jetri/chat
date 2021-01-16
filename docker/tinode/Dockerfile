@@ -16,7 +16,7 @@ FROM golang:1.14.6-alpine3.12 as build
 
 # Database selector. Builds for RethinkDB by default.
 # Alternatively use `--build-arg TARGET_DB=mysql` to build for MySQL.
-ARG TARGET_DB=mysql
+ARG TARGET_DB=postgres
 ENV TARGET_DB=$TARGET_DB
 
 # Copy the local package files to the container’s workspace.
@@ -27,6 +27,7 @@ RUN cd /go/src/github.com/jetri/chat/server && go build -tags $TARGET_DB -o tino
 RUN cd /go/src/github.com/jetri/chat/tinode-db && go build -tags $TARGET_DB -o init-db
 
 FROM alpine:latest
+RUN apk add --no-cache ca-certificates
 
 ARG VERSION=0.16
 ENV VERSION=$VERSION
@@ -43,8 +44,8 @@ LABEL version=$VERSION
 # `--build-arg TARGET_DB=mysql` to build for MySQL or
 # `--build-arg TARGET_DB=mongodb` to build for MongoDB.
 # `--build-arg TARGET_DB=alldbs` to build a generic Tinode docker image.
-ARG TARGET_DB=rethinkdb
-ENV TARGET_DB=$TARGET_DB
+# ARG TARGET_DB=rethinkdb
+# ENV TARGET_DB=$TARGET_DB
 
 # Runtime options.
 
@@ -62,11 +63,14 @@ ENV UPGRADE_DB=false
 ENV NO_DB_INIT=false
 
 # Load sample data to database from data.json.
-ARG SAMPLE_DATA=data.json
+# Use SAMPLE_DATA only when local or testing
+ARG SAMPLE_DATA=
 ENV SAMPLE_DATA=$SAMPLE_DATA
 
 # The MySQL DSN connection.
-ENV MYSQL_DSN='root@tcp(mysql)/tinode'
+# ENV MYSQL_DSN='root@tcp(mysql)/tinode'
+
+ENV POSTGRES_DSN='host=postgres user=postgres password=angels03! dbname=tinode sslmode=disable'
 
 # Disable chatbot plugin by default.
 ENV PLUGIN_PYTHON_CHAT_BOT_ENABLED=false
