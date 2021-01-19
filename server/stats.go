@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tinode/chat/server/logs"
+	"github.com/jetri/chat/server/logs"
 )
 
 // A simple implementation of histogram expvar.Var.

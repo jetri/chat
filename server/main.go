@@ -39,7 +39,7 @@ import (
 	_ "github.com/jetri/chat/server/db/postgres"
 	_ "github.com/jetri/chat/server/db/rethinkdb"
 
-	"github.com/tinode/chat/server/logs"
+	"github.com/jetri/chat/server/logs"
 
 	// Push notifications
 	"github.com/jetri/chat/server/push"
