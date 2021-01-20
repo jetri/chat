@@ -1,10 +1,12 @@
 package main
 
 import (
-	"log"
 	"math/rand"
 	"net/rpc"
+	"sync"
 	"time"
+
+	"github.com/tinode/chat/server/logs"
 )
 
 // Cluster methods related to leader node election. Based on ideas from Raft protocol.
@@ -25,15 +27,16 @@ type clusterFailover struct {
 	voteTimeout int
 
 	// The list of nodes the leader considers active
-	activeNodes []string
+	activeNodes     []string
+	activeNodesLock sync.RWMutex
 	// The number of heartbeats a node can fail before being declared dead
 	nodeFailCountLimit int
 
-	// Channel for processing leader pings
-	leaderPing chan *ClusterPing
-	// Channel for processing election votes
+	// Channel for processing leader health checks.
+	healthCheck chan *ClusterHealth
+	// Channel for processing election votes.
 	electionVote chan *ClusterVote
-	// Channel for stopping the failover runner
+	// Channel for stopping the failover runner.
 	done chan bool
 }
 
@@ -48,8 +51,8 @@ type clusterFailoverConfig struct {
 	NodeFailAfter int `json:"node_fail_after"`
 }
 
-// ClusterPing is content of a leader node ping to a follower node.
-type ClusterPing struct {
+// ClusterHealth is content of a leader's health check of a follower node.
+type ClusterHealth struct {
 	// Name of the leader node
 	Leader string
 	// Election term
@@ -87,7 +90,7 @@ func (c *Cluster) failoverInit(config *clusterFailoverConfig) bool {
 		return false
 	}
 	if len(c.nodes) < 2 {
-		log.Printf("cluster: failover disabled; need at least 3 nodes, got %d", len(c.nodes)+1)
+		logs.Err.Printf("cluster: failover disabled; need at least 3 nodes, got %d", len(c.nodes)+1)
 		return false
 	}
 
@@ -110,20 +113,20 @@ func (c *Cluster) failoverInit(config *clusterFailoverConfig) bool {
 		heartBeat:          hb,
 		voteTimeout:        config.VoteAfter,
 		nodeFailCountLimit: config.NodeFailAfter,
-		leaderPing:         make(chan *ClusterPing, config.VoteAfter),
+		healthCheck:        make(chan *ClusterHealth, config.VoteAfter),
 		electionVote:       make(chan *ClusterVote, len(c.nodes)),
 		done:               make(chan bool, 1)}
 
-	log.Println("cluster: failover mode enabled")
+	logs.Info.Println("cluster: failover mode enabled")
 
 	return true
 }
 
-// Ping is called by the leader node to assert leadership and check status
+// Health is called by the leader node to assert leadership and check status
 // of the followers.
-func (c *Cluster) Ping(ping *ClusterPing, unused *bool) error {
+func (c *Cluster) Health(health *ClusterHealth, unused *bool) error {
 	select {
-	case c.fo.leaderPing <- ping:
+	case c.fo.healthCheck <- health:
 	default:
 	}
 	return nil
@@ -142,13 +145,13 @@ func (c *Cluster) Vote(vreq *ClusterVoteRequest, response *ClusterVoteResponse) 
 	return nil
 }
 
-// Cluster leader checks health of other nodes.
-func (c *Cluster) sendPings() {
+// Cluster leader checks health of follower nodes.
+func (c *Cluster) sendHealthChecks() {
 	rehash := false
 
 	for _, node := range c.nodes {
 		unused := false
-		err := node.call("Cluster.Ping", &ClusterPing{
+		err := node.call("Cluster.Health", &ClusterHealth{
 			Leader:    c.thisNodeName,
 			Term:      c.fo.term,
 			Signature: c.ring.Signature(),
@@ -176,12 +179,14 @@ func (c *Cluster) sendPings() {
 				activeNodes = append(activeNodes, node.name)
 			}
 		}
+		c.fo.activeNodesLock.Lock()
 		c.fo.activeNodes = activeNodes
+		c.fo.activeNodesLock.Unlock()
 		c.rehash(activeNodes)
-		c.invalidateProxySubs()
-		c.garbageCollectProxySessions(activeNodes)
+		c.invalidateProxySubs("")
+		c.gcProxySessions(activeNodes)
 
-		log.Println("cluster: initiating failover rehash for nodes", activeNodes)
+		logs.Info.Println("cluster: initiating failover rehash for nodes", activeNodes)
 		globals.hub.rehash <- true
 	}
 }
@@ -194,7 +199,7 @@ func (c *Cluster) electLeader() {
 	// Make sure the current node does not report itself as a leader.
 	statsSet("ClusterLeader", 0)
 
-	log.Println("cluster: leading new election for term", c.fo.term)
+	logs.Info.Println("cluster: leading new election for term", c.fo.term)
 
 	nodeCount := len(c.nodes)
 	// Number of votes needed to elect the leader
@@ -241,7 +246,7 @@ func (c *Cluster) electLeader() {
 		// Current node elected as the leader.
 		c.fo.leader = c.thisNodeName
 		statsSet("ClusterLeader", 1)
-		log.Printf("'%s' elected self as a new leader", c.thisNodeName)
+		logs.Info.Printf("'%s' elected self as a new leader", c.thisNodeName)
 	}
 }
 
@@ -250,21 +255,21 @@ func (c *Cluster) run() {
 
 	ticker := time.NewTicker(c.fo.heartBeat)
 
-	// Count of missed pings from the leader.
+	// Count of missed health checks from the leader.
 	missed := 0
-	// Don't rehash immediately on the first ping. If this node just came online, leader will
-	// account it on the next ping. Otherwise it will be rehashing twice.
+	// Don't rehash immediately on the first missed health check. If this node just came online, leader will
+	// account it on the next check. Otherwise it will be rehashing twice.
 	rehashSkipped := false
 
 	for {
 		select {
 		case <-ticker.C:
 			if c.fo.leader == c.thisNodeName {
-				// I'm the leader, send pings
-				c.sendPings()
+				// I'm the leader, send the health checks to followers.
+				c.sendHealthChecks()
 			} else {
-				// Increment the number of missed pings from the leader.
-				// The counter will be reset to zero when the ping is received.
+				// Increment the number of missed health checks from the leader.
+				// The counter will be reset to zero when a health check is received.
 				missed++
 				if missed >= c.fo.voteTimeout {
 					// Leader is gone, initiate election of a new leader.
@@ -272,41 +277,41 @@ func (c *Cluster) run() {
 					c.electLeader()
 				}
 			}
-		case ping := <-c.fo.leaderPing:
-			// Ping from a leader.
+		case health := <-c.fo.healthCheck:
+			// Health check from the leader.
 
-			if ping.Term < c.fo.term {
-				// This is a ping from a stale leader. Ignore.
-				log.Println("cluster: ping from a stale leader", ping.Term, c.fo.term, ping.Leader, c.fo.leader)
+			if health.Term < c.fo.term {
+				// This is a health check from a stale leader. Ignore.
+				logs.Warn.Println("cluster: health check from a stale leader", health.Term, c.fo.term, health.Leader, c.fo.leader)
 				continue
 			}
 
-			if ping.Term > c.fo.term {
-				c.fo.term = ping.Term
-				c.fo.leader = ping.Leader
-				log.Printf("cluster: leader '%s' elected", c.fo.leader)
-			} else if ping.Leader != c.fo.leader {
+			if health.Term > c.fo.term {
+				c.fo.term = health.Term
+				c.fo.leader = health.Leader
+				logs.Info.Printf("cluster: leader '%s' elected", c.fo.leader)
+			} else if health.Leader != c.fo.leader {
 				if c.fo.leader != "" {
 					// Wrong leader. It's a bug, should never happen!
-					log.Printf("cluster: wrong leader '%s' while expecting '%s'; term %d",
-						ping.Leader, c.fo.leader, ping.Term)
+					logs.Err.Printf("cluster: wrong leader '%s' while expecting '%s'; term %d",
+						health.Leader, c.fo.leader, health.Term)
 				} else {
-					log.Printf("cluster: leader set to '%s'", ping.Leader)
+					logs.Info.Printf("cluster: leader set to '%s'", health.Leader)
 				}
-				c.fo.leader = ping.Leader
+				c.fo.leader = health.Leader
 			}
 
-			// This ping is from a leader, consequently this node is not the leader.
+			// This is a health check from a leader, consequently this node is not the leader.
 			statsSet("ClusterLeader", 0)
 
 			missed = 0
-			if ping.Signature != c.ring.Signature() {
+			if health.Signature != c.ring.Signature() {
 				if rehashSkipped {
-					log.Println("cluster: rehashing at a request of",
-						ping.Leader, ping.Nodes, ping.Signature, c.ring.Signature())
-					c.rehash(ping.Nodes)
-					c.invalidateProxySubs()
-					c.garbageCollectProxySessions(ping.Nodes)
+					logs.Info.Println("cluster: rehashing at a request of",
+						health.Leader, health.Nodes, health.Signature, c.ring.Signature())
+					c.rehash(health.Nodes)
+					c.invalidateProxySubs("")
+					c.gcProxySessions(health.Nodes)
 					rehashSkipped = false
 
 					globals.hub.rehash <- true
@@ -319,7 +324,7 @@ func (c *Cluster) run() {
 			if c.fo.term < vreq.req.Term {
 				// This is a new election. This node has not voted yet. Vote for the requestor and
 				// clear the current leader.
-				log.Printf("Voting YES for %s, my term %d, vote term %d", vreq.req.Node, c.fo.term, vreq.req.Term)
+				logs.Info.Printf("Voting YES for %s, my term %d, vote term %d", vreq.req.Node, c.fo.term, vreq.req.Term)
 				c.fo.term = vreq.req.Term
 				c.fo.leader = ""
 				// Election means these is no leader yet.
@@ -327,7 +332,7 @@ func (c *Cluster) run() {
 				vreq.resp <- ClusterVoteResponse{Result: true, Term: c.fo.term}
 			} else {
 				// This node has voted already or stale election, reject.
-				log.Printf("Voting NO for %s, my term %d, vote term %d", vreq.req.Node, c.fo.term, vreq.req.Term)
+				logs.Info.Printf("Voting NO for %s, my term %d, vote term %d", vreq.req.Node, c.fo.term, vreq.req.Term)
 				vreq.resp <- ClusterVoteResponse{Result: false, Term: c.fo.term}
 			}
 		case <-c.fo.done:

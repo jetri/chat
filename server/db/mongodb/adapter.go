@@ -8,12 +8,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jetri/chat/server/auth"
+	"github.com/jetri/chat/server/logs"
 	"github.com/jetri/chat/server/store"
 	t "github.com/jetri/chat/server/store/types"
 	b "go.mongodb.org/mongo-driver/bson"
@@ -46,6 +46,9 @@ const (
 	defaultMaxResults = 1024
 	// This is capped by the Session's send queue limit (128).
 	defaultMaxMessageResults = 100
+
+	defaultAuthMechanism = "SCRAM-SHA-256"
+	defaultAuthSource    = "admin"
 )
 
 // See https://godoc.org/go.mongodb.org/mongo-driver/mongo/options#ClientOptions for explanations.
@@ -57,9 +60,10 @@ type configType struct {
 	Database   string `json:"database,omitempty"`
 	ReplicaSet string `json:"replica_set,omitempty"`
 
-	AuthSource string `json:"auth_source,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
+	AuthMechanism string `json:"auth_mechanism,omitempty"`
+	AuthSource    string `json:"auth_source,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
 
 	UseTLS             bool   `json:"tls,omitempty"`
 	TlsCertFile        string `json:"tls_cert_file,omitempty"`
@@ -71,6 +75,10 @@ type configType struct {
 func (a *adapter) Open(jsonconfig json.RawMessage) error {
 	if a.conn != nil {
 		return errors.New("adapter mongodb is already connected")
+	}
+
+	if len(jsonconfig) < 2 {
+		return errors.New("adapter mongodb missing config")
 	}
 
 	var err error
@@ -85,7 +93,15 @@ func (a *adapter) Open(jsonconfig json.RawMessage) error {
 		opts.SetHosts([]string{defaultHost})
 	} else if host, ok := config.Addresses.(string); ok {
 		opts.SetHosts([]string{host})
-	} else if hosts, ok := config.Addresses.([]string); ok {
+	} else if ihosts, ok := config.Addresses.([]interface{}); ok && len(ihosts) > 0 {
+		hosts := make([]string, len(ihosts))
+		for i, ih := range ihosts {
+			h, ok := ih.(string)
+			if !ok || h == "" {
+				return errors.New("adapter mongodb invalid config.Addresses value")
+			}
+			hosts[i] = h
+		}
 		opts.SetHosts(hosts)
 	} else {
 		return errors.New("adapter mongodb failed to parse config.Addresses")
@@ -98,23 +114,26 @@ func (a *adapter) Open(jsonconfig json.RawMessage) error {
 	}
 
 	if config.ReplicaSet == "" {
-		log.Println("MongoDB configured as standalone or replica_set option not set. Transaction support is disabled.")
+		logs.Info.Println("MongoDB configured as standalone or replica_set option not set. Transaction support is disabled.")
 	} else {
 		opts.SetReplicaSet(config.ReplicaSet)
 		a.useTransactions = true
 	}
 
 	if config.Username != "" {
-		var passwordSet bool
-		if config.AuthSource == "" {
-			config.AuthSource = "admin"
+		if config.AuthMechanism == "" {
+			config.AuthMechanism = defaultAuthMechanism
 		}
+		if config.AuthSource == "" {
+			config.AuthSource = defaultAuthSource
+		}
+		var passwordSet bool
 		if config.Password != "" {
 			passwordSet = true
 		}
 		opts.SetAuth(
 			mdbopts.Credential{
-				AuthMechanism: "SCRAM-SHA-256",
+				AuthMechanism: config.AuthMechanism,
 				AuthSource:    config.AuthSource,
 				Username:      config.Username,
 				Password:      config.Password,
@@ -234,7 +253,7 @@ func (a *adapter) SetMaxResults(val int) error {
 // CreateDb creates the database optionally dropping an existing database first.
 func (a *adapter) CreateDb(reset bool) error {
 	if reset {
-		log.Print("Dropping database...")
+		logs.Info.Print("Dropping database...")
 		if err := a.db.Drop(a.ctx); err != nil {
 			return err
 		}
@@ -1210,6 +1229,7 @@ func (a *adapter) TopicGet(topic string) (*t.Topic, error) {
 		}
 		return nil, err
 	}
+	tpc.Public = unmarshalBsonD(tpc.Public)
 	return tpc, nil
 }
 
@@ -1250,7 +1270,9 @@ func (a *adapter) TopicsForUser(uid t.Uid, keepDeleted bool, opts *t.QueryOpt) (
 		if err = cur.Decode(&sub); err != nil {
 			return nil, err
 		}
-		tcat := t.GetTopicCat(sub.Topic)
+
+		tname := sub.Topic
+		tcat := t.GetTopicCat(tname)
 
 		// skip 'me' or 'fnd' subscription
 		if tcat == t.TopicCatMe || tcat == t.TopicCatFnd {
@@ -1264,14 +1286,16 @@ func (a *adapter) TopicsForUser(uid t.Uid, keepDeleted bool, opts *t.QueryOpt) (
 			} else {
 				usrq = append(usrq, uid1.String())
 			}
-			topq = append(topq, sub.Topic)
+			topq = append(topq, tname)
 
 			// grp subscription
 		} else {
-			topq = append(topq, sub.Topic)
+			// Convert channel names to topic names.
+			tname = t.ChnToGrp(tname)
+			topq = append(topq, tname)
 		}
 		sub.Private = unmarshalBsonD(sub.Private)
-		join[sub.Topic] = sub
+		join[tname] = sub
 	}
 	cur.Close(a.ctx)
 
@@ -1798,7 +1822,11 @@ func (a *adapter) FindTopics(req [][]string, opt []string) ([]t.Subscription, er
 
 		sub.CreatedAt = topic.CreatedAt
 		sub.UpdatedAt = topic.UpdatedAt
-		sub.User = topic.Id
+		if topic.UseBt {
+			sub.Topic = t.GrpToChn(topic.Id)
+		} else {
+			sub.Topic = topic.Id
+		}
 		sub.SetPublic(unmarshalBsonD(topic.Public))
 		sub.SetDefaultAccess(topic.Access.Auth, topic.Access.Anon)
 		tags := make([]string, 0, 1)
@@ -1897,6 +1925,7 @@ func (a *adapter) MessageDeleteList(topic string, toDel *t.DelMessage) error {
 	var err error
 
 	if toDel == nil {
+		// No filter: delete all messages.
 		return a.messagesHardDelete(topic)
 	}
 
@@ -1917,7 +1946,7 @@ func (a *adapter) MessageDeleteList(topic string, toDel *t.DelMessage) error {
 		rangeFilter := b.A{}
 		for _, rng := range toDel.SeqIdRanges {
 			if rng.Hi == 0 {
-				rangeFilter = append(rangeFilter, b.M{"seqid": b.M{"$gte": rng.Low}})
+				rangeFilter = append(rangeFilter, b.M{"seqid": rng.Low})
 			} else {
 				rangeFilter = append(rangeFilter, b.M{"seqid": b.M{"$gte": rng.Low, "$lte": rng.Hi}})
 			}
@@ -2290,12 +2319,12 @@ func normalizeUpdateMap(update map[string]interface{}) map[string]interface{} {
 
 // Recursive unmarshalling of bson.D type.
 // Mongo drivers unmarshalling into interface{} creates bson.D object for maps and bson.A object for slices.
-// We need manually unmarshal them into correct type - bson.M (map[string]interface{}).
+// We need manually unmarshal them into correct types: map[string]interface{} and []interface{] respectively.
 func unmarshalBsonD(bsonObj interface{}) interface{} {
 	if obj, ok := bsonObj.(b.D); ok && len(obj) != 0 {
-		result := make(b.M, 0)
-		for k, v := range obj.Map() {
-			result[k] = unmarshalBsonD(v)
+		result := make(map[string]interface{})
+		for key, val := range obj.Map() {
+			result[key] = unmarshalBsonD(val)
 		}
 		return result
 	} else if obj, ok := bsonObj.(primitive.Binary); ok {
@@ -2303,7 +2332,7 @@ func unmarshalBsonD(bsonObj interface{}) interface{} {
 		return obj.Data
 	} else if obj, ok := bsonObj.(b.A); ok {
 		// in case of array of bson.D objects
-		result := make(b.A, 0)
+		var result []interface{}
 		for _, elem := range obj {
 			result = append(result, unmarshalBsonD(elem))
 		}

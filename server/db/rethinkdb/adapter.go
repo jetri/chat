@@ -14,7 +14,7 @@ import (
 	"github.com/jetri/chat/server/auth"
 	"github.com/jetri/chat/server/store"
 	t "github.com/jetri/chat/server/store/types"
-	rdb "gopkg.in/rethinkdb/rethinkdb-go.v5"
+	rdb "gopkg.in/rethinkdb/rethinkdb-go.v6"
 )
 
 // adapter holds RethinkDb connection data.
@@ -66,9 +66,12 @@ func (a *adapter) Open(jsonconfig json.RawMessage) error {
 		return errors.New("adapter rethinkdb is already connected")
 	}
 
+	if len(jsonconfig) < 2 {
+		return errors.New("adapter rethinkdb missing config")
+	}
+
 	var err error
 	var config configType
-
 	if err = json.Unmarshal(jsonconfig, &config); err != nil {
 		return errors.New("adapter rethinkdb failed to parse config: " + err.Error())
 	}
@@ -79,7 +82,15 @@ func (a *adapter) Open(jsonconfig json.RawMessage) error {
 		opts.Address = defaultHost
 	} else if host, ok := config.Addresses.(string); ok {
 		opts.Address = host
-	} else if hosts, ok := config.Addresses.([]string); ok {
+	} else if ihosts, ok := config.Addresses.([]interface{}); ok && len(ihosts) > 0 {
+		hosts := make([]string, len(ihosts))
+		for i, ih := range ihosts {
+			h, ok := ih.(string)
+			if !ok || h == "" {
+				return errors.New("adapter rethinkdb invalid config.Addresses value")
+			}
+			hosts[i] = h
+		}
 		opts.Addresses = hosts
 	} else {
 		return errors.New("adapter rethinkdb failed to parse config.Addresses")
@@ -1081,7 +1092,8 @@ func (a *adapter) TopicsForUser(uid t.Uid, keepDeleted bool, opts *t.QueryOpt) (
 	topq := make([]interface{}, 0, 16)
 	usrq := make([]interface{}, 0, 16)
 	for cursor.Next(&sub) {
-		tcat := t.GetTopicCat(sub.Topic)
+		tname := sub.Topic
+		tcat := t.GetTopicCat(tname)
 
 		// 'me' or 'fnd' subscription, skip
 		if tcat == t.TopicCatMe || tcat == t.TopicCatFnd {
@@ -1095,13 +1107,15 @@ func (a *adapter) TopicsForUser(uid t.Uid, keepDeleted bool, opts *t.QueryOpt) (
 			} else {
 				usrq = append(usrq, uid1.String())
 			}
-			topq = append(topq, sub.Topic)
+			topq = append(topq, tname)
 
 			// grp subscription
 		} else {
-			topq = append(topq, sub.Topic)
+			// Convert channel names to topic names.
+			tname = t.ChnToGrp(sub.Topic)
+			topq = append(topq, tname)
 		}
-		join[sub.Topic] = sub
+		join[tname] = sub
 	}
 	cursor.Close()
 
@@ -1607,7 +1621,7 @@ func (a *adapter) FindTopics(req [][]string, opt []string) ([]t.Subscription, er
 		Table("topics").
 		GetAllByIndex("Tags", allTags...).
 		Filter(rdb.Row.Field("State").Eq(t.StateOK)).
-		Pluck("Id", "Access", "CreatedAt", "UpdatedAt", "Public", "Tags").
+		Pluck("Id", "Access", "CreatedAt", "UpdatedAt", "UseBt", "Public", "Tags").
 		Group("Id").
 		Ungroup().
 		Map(func(row rdb.Term) rdb.Term {
@@ -1640,7 +1654,11 @@ func (a *adapter) FindTopics(req [][]string, opt []string) ([]t.Subscription, er
 	for cursor.Next(&topic) {
 		sub.CreatedAt = topic.CreatedAt
 		sub.UpdatedAt = topic.UpdatedAt
-		sub.Topic = topic.Id
+		if topic.UseBt {
+			sub.Topic = t.GrpToChn(topic.Id)
+		} else {
+			sub.Topic = topic.Id
+		}
 		sub.SetPublic(topic.Public)
 		sub.SetDefaultAccess(topic.Access.Auth, topic.Access.Anon)
 		tags := make([]string, 0, 1)
@@ -1765,6 +1783,7 @@ func (a *adapter) MessageGetDeleted(topic string, forUser t.Uid, opts *t.QueryOp
 	return dmsgs, nil
 }
 
+// Delete all messages in the topic.
 func (a *adapter) messagesHardDelete(topic string) error {
 	var err error
 
@@ -1797,6 +1816,7 @@ func (a *adapter) MessageDeleteList(topic string, toDel *t.DelMessage) error {
 	var err error
 
 	if toDel == nil {
+		// Delete all messages.
 		err = a.messagesHardDelete(topic)
 	} else {
 		// Only some messages are being deleted

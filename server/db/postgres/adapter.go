@@ -270,7 +270,7 @@ func (a *adapter) CreateDb(reset bool) error {
 	// Indexed devices. Normalized into a separate table.
 	if _, err = tx.Exec(
 		`CREATE TABLE devices(
-			id       SERIAL NOT NULL PRIMARY KEY,
+			id       BIGSERIAL NOT NULL PRIMARY KEY,
 			userid   BIGINT NOT NULL,
 			hash     VARCHAR(16) NOT NULL,
 			deviceid TEXT NOT NULL,
@@ -977,7 +977,7 @@ func (a *adapter) UserUpdateTags(uid t.Uid, add, remove, reset []string) ([]stri
 	}
 
 	var allTags []string
-	err = tx.Select(allTags, "SELECT tag FROM usertags WHERE userid=$1", decoded_uid)
+	err = tx.Select(&allTags, "SELECT tag FROM usertags WHERE userid=$1", decoded_uid)
 	if err != nil {
 		return nil, err
 	}
@@ -2223,14 +2223,16 @@ func (a *adapter) DeviceUpsert(uid t.Uid, def *t.DeviceDef) error {
 	}()
 
 	// Ensure uniqueness of the device ID: delete all records of the device ID
-	_, err = tx.Exec("DELETE FROM devices WHERE hash=$1", hash)
-	if err != nil {
-		return err
-	}
+	// _, err = tx.Exec("DELETE FROM devices WHERE hash=$1", hash)
+	// if err != nil {
+	// 	return err
+	// }
 
 	// Actually add/update DeviceId for the new user
-	_, err = tx.Exec("INSERT INTO devices(userid, hash, deviceId, platform, lastseen, lang) VALUES($1,$2,$3,$4,$5,$6)",
-		store.DecodeUid(uid), hash, def.DeviceId, def.Platform, def.LastSeen, def.Lang)
+	_, err = tx.Exec(`
+	INSERT INTO devices(userid, hash, deviceId, platform, lastseen, lang) VALUES($1,$2,$3,$4,$5,$6)
+	ON CONFLICT (hash) DO UPDATE SET userid=$1, deviceId=$3, platform=$4, lastseen=$5, lang=$6;
+	`, store.DecodeUid(uid), hash, def.DeviceId, def.Platform, def.LastSeen, def.Lang)
 	if err != nil {
 		return err
 	}

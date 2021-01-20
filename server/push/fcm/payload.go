@@ -2,13 +2,13 @@ package fcm
 
 import (
 	"errors"
-	"log"
 	"strconv"
 	"time"
 
 	fcm "firebase.google.com/go/messaging"
 
 	"github.com/jetri/chat/server/drafty"
+	"github.com/jetri/chat/server/logs"
 	"github.com/jetri/chat/server/push"
 	"github.com/jetri/chat/server/store"
 	t "github.com/jetri/chat/server/store/types"
@@ -128,7 +128,8 @@ type androidPayload struct {
 
 // MessageData adds user ID and device token to push message. This is needed for error handling.
 type MessageData struct {
-	Uid      t.Uid
+	Uid t.Uid
+	// FCM device token.
 	DeviceId string
 	Message  *fcm.Message
 }
@@ -150,18 +151,25 @@ func payloadToData(pl *push.Payload) (map[string]string, error) {
 	if pl.What == push.ActMsg {
 		data["seq"] = strconv.Itoa(pl.SeqId)
 		data["mime"] = pl.ContentType
+
+		// Convert Drafty content to plain text (clients 0.16 and below).
 		data["content"], err = drafty.ToPlainText(pl.Content)
 		if err != nil {
 			return nil, err
 		}
-
-		// Trim long strings to 80 runes.
+		// Trim long strings to 128 runes.
 		// Check byte length first and don't waste time converting short strings.
-		if len(data["content"]) > maxMessageLength {
+		if len(data["content"]) > push.MaxPayloadLength {
 			runes := []rune(data["content"])
-			if len(runes) > maxMessageLength {
-				data["content"] = string(runes[:maxMessageLength]) + "…"
+			if len(runes) > push.MaxPayloadLength {
+				data["content"] = string(runes[:push.MaxPayloadLength]) + "…"
 			}
+		}
+
+		// Rich content for clients version 0.17 and above.
+		data["rc"], err = drafty.Preview(pl.Content, push.MaxPayloadLength)
+		if err != nil {
+			return nil, err
 		}
 	} else if pl.What == push.ActSub {
 		data["modeWant"] = pl.ModeWant.String()
@@ -185,33 +193,40 @@ func clonePayload(src map[string]string) map[string]string {
 func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageData {
 	data, err := payloadToData(&rcpt.Payload)
 	if err != nil {
-		log.Println("fcm push: could not parse payload;", err)
+		logs.Warn.Println("fcm push: could not parse payload;", err)
 		return nil
 	}
 
-	// List of UIDs for querying the database
-	uids := make([]t.Uid, len(rcpt.To))
-	// These devices were online in the topic when the message was sent.
+	// Device IDs to send pushes to.
+	var devices map[t.Uid][]t.DeviceDef
+	// Count of device IDs to push to.
+	var count int
+	// Devices which were online in the topic when the message was sent.
 	skipDevices := make(map[string]struct{})
-	i := 0
-	for uid, to := range rcpt.To {
-		uids[i] = uid
-		i++
-		// Some devices were online and received the message. Skip them.
-		for _, deviceID := range to.Devices {
-			skipDevices[deviceID] = struct{}{}
+	if len(rcpt.To) > 0 {
+		// List of UIDs for querying the database
+
+		uids := make([]t.Uid, len(rcpt.To))
+		i := 0
+		for uid, to := range rcpt.To {
+			uids[i] = uid
+			i++
+			// Some devices were online and received the message. Skip them.
+			for _, deviceID := range to.Devices {
+				skipDevices[deviceID] = struct{}{}
+			}
+		}
+		devices, count, err = store.Devices.GetAll(uids...)
+		if err != nil {
+			logs.Warn.Println("fcm push: db error", err)
+			return nil
 		}
 	}
-	devices, count, err := store.Devices.GetAll(uids...)
-	if err != nil {
-		log.Println("fcm push: db error", err)
-		return nil
-	}
-	if count == 0 {
+	if count == 0 && rcpt.Channel == "" {
 		return nil
 	}
 
-	var titlelc, title, bodylc, body, icon, color string
+	var titlelc, title, bodylc, body, icon, color, clickAction string
 	if config != nil && config.Enabled {
 		titlelc = config.getTitleLocKey(rcpt.Payload.What)
 		title = config.getTitle(rcpt.Payload.What)
@@ -222,7 +237,47 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 		}
 		icon = config.getIcon(rcpt.Payload.What)
 		color = config.getColor(rcpt.Payload.What)
-		//clickAction = config.getClickAction(rcpt.Payload.What)
+		clickAction = config.getClickAction(rcpt.Payload.What)
+	}
+
+	androidNotification := func(msg *fcm.Message) {
+		// When this notification type is included and the app is not in the foreground
+		// Android won't wake up the app and won't call FirebaseMessagingService:onMessageReceived.
+		// See dicussion: https://github.com/firebase/quickstart-js/issues/71
+		if config != nil && config.Enabled {
+			msg.Android.Notification = &fcm.AndroidNotification{
+				// Android uses Tag value to group notifications together:
+				// show just one notification per topic.
+				Tag:         rcpt.Payload.Topic,
+				Priority:    fcm.PriorityHigh,
+				Visibility:  fcm.VisibilityPrivate,
+				TitleLocKey: titlelc,
+				Title:       title,
+				BodyLocKey:  bodylc,
+				Body:        body,
+				Icon:        icon,
+				Color:       color,
+				ClickAction: clickAction,
+			}
+		}
+	}
+
+	apnsNotification := func(msg *fcm.Message) {
+		msg.APNS = &fcm.APNSConfig{
+			Payload: &fcm.APNSPayload{
+				Aps: &fcm.Aps{
+					ContentAvailable: true,
+					MutableContent:   true,
+					Sound:            "default",
+					// Need to duplicate these in APNS.Payload.Aps.Alert so
+					// iOS may call NotificationServiceExtension (if present).
+					Alert: &fcm.ApsAlert{
+						Title: title,
+						Body:  body,
+					},
+				},
+			},
+		}
 	}
 
 	var messages []MessageData
@@ -239,64 +294,67 @@ func PrepareNotifications(rcpt *push.Receipt, config *AndroidConfig) []MessageDa
 				msg := fcm.Message{
 					Token: d.DeviceId,
 					Data:  userData,
+					Notification: &fcm.Notification{
+						Title: title,
+						Body:  body,
+					},
 				}
 
 				if d.Platform == "android" {
 					msg.Android = &fcm.AndroidConfig{
 						Priority: "high",
 					}
-
-					log.Println("payload platform: ", d.Platform, "config enabled: ", config.Enabled)
-
-					if config != nil && config.Enabled {
-						// When this notification type is included and the app is not in the foreground
-						// Android won't wake up the app and won't call FirebaseMessagingService:onMessageReceived.
-						// See dicussion: https://github.com/firebase/quickstart-js/issues/71
-						msg.Android.Notification = &fcm.AndroidNotification{
-							// Android uses Tag value to group notifications together:
-							// show just one notification per topic.
-							Tag:         rcpt.Payload.Topic,
-							Priority:    fcm.PriorityHigh,
-							Visibility:  fcm.VisibilityPrivate,
-							TitleLocKey: titlelc,
-							Title:       title,
-							BodyLocKey:  bodylc,
-							Body:        body,
-							Icon:        icon,
-							Color:       color,
-							//ClickAction: clickAction,
-						}
-					}
+					androidNotification(&msg)
 				} else if d.Platform == "ios" {
+					apnsNotification(&msg)
 					// iOS uses Badge to show the total unread message count.
-					// badge := rcpt.To[uid].Unread
 					badge := 0
-					// Need to duplicate these in APNS.Payload.Aps.Alert so
-					// iOS may call NotificationServiceExtension (if present).
-					title := "New message"
-					body := userData["content"]
-					msg.APNS = &fcm.APNSConfig{
-						Payload: &fcm.APNSPayload{
-							Aps: &fcm.Aps{
-								Badge:            &badge,
-								ContentAvailable: true,
-								MutableContent:   true,
-								Sound:            "default",
-								Alert: &fcm.ApsAlert{
-									Title: title,
-									Body:  body,
-								},
-							},
-						},
-					}
-					msg.Notification = &fcm.Notification{
-						Title: title,
-						Body:  body,
-					}
+					msg.APNS.Payload.Aps.Badge = &badge
 				}
 				messages = append(messages, MessageData{Uid: uid, DeviceId: d.DeviceId, Message: &msg})
 			}
 		}
 	}
+
+	if rcpt.Channel != "" {
+		topic := rcpt.Channel
+		userData := clonePayload(data)
+		userData["topic"] = topic
+		msg := fcm.Message{
+			Topic: topic,
+			Data:  userData,
+			Notification: &fcm.Notification{
+				Title: title,
+				Body:  body,
+			},
+		}
+
+		msg.Android = &fcm.AndroidConfig{
+			Priority: "normal",
+		}
+		androidNotification(&msg)
+		apnsNotification(&msg)
+		messages = append(messages, MessageData{Message: &msg})
+	}
+
 	return messages
+}
+
+// DevicesForUser loads device IDs of the given user.
+func DevicesForUser(uid t.Uid) []string {
+	ddef, count, err := store.Devices.GetAll(uid)
+	if err != nil {
+		logs.Warn.Println("fcm devices for user: db error", err)
+		return nil
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	devices := make([]string, count)
+	for i, dd := range ddef[uid] {
+		devices[i] = dd.DeviceId
+	}
+	return devices
 }

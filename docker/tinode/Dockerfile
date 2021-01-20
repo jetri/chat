@@ -9,7 +9,7 @@
 #	--env AUTH_TOKEN_KEY=base64+encoded+32+bytes \
 #	tinode-server
 
-#FROM alpine:3.11
+#FROM alpine:3.12
 FROM golang:1.14.6-alpine3.12 as build
 
 # Build-time options.
@@ -127,6 +127,10 @@ ENV TNPG_ORG=
 # When TARGET_DB is "alldbs", it is the user's responsibility
 # to set STORE_USE_ADAPTER to the desired db adapter correctly.
 ENV STORE_USE_ADAPTER=$TARGET_DB
+
+# Number of the goroutines processing topic master responses to the topic proxies.
+# If 0, default value wll be used: # of nodes x 5.
+ENV CLUSTER_NUM_PROXY_EVENT_GOROUTINES=0
 
 # Install root certificates, they are needed for email validator to work
 # with the TLS SMTP servers like Gmail or Mailjet. Also add bash and grep.

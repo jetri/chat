@@ -10,13 +10,13 @@ package main
 
 import (
 	"container/list"
-	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/jetri/chat/pbx"
+	"github.com/jetri/chat/server/logs"
 	"github.com/jetri/chat/server/store"
 	"github.com/jetri/chat/server/store/types"
 )
@@ -47,7 +47,7 @@ func (ss *SessionStore) NewSession(conn interface{}, sid string) (*Session, int)
 
 	ss.lock.Lock()
 	if _, found := ss.sessCache[s.sid]; found {
-		log.Fatalln("ERROR! duplicate session ID", s.sid)
+		logs.Err.Fatalln("ERROR! duplicate session ID", s.sid)
 	}
 	ss.lock.Unlock()
 
@@ -65,7 +65,7 @@ func (ss *SessionStore) NewSession(conn interface{}, sid string) (*Session, int)
 		s.proto = GRPC
 		s.grpcnode = c
 	default:
-		log.Panicln("session: unknown connection type", conn)
+		logs.Err.Panicln("session: unknown connection type", conn)
 	}
 
 	s.subs = make(map[string]*Subscription)
@@ -75,6 +75,8 @@ func (ss *SessionStore) NewSession(conn interface{}, sid string) (*Session, int)
 
 	s.bkgTimer = time.NewTimer(time.Hour)
 	s.bkgTimer.Stop()
+
+	s.inflightReqs = &sync.WaitGroup{}
 
 	s.lastTouched = time.Now()
 
@@ -102,6 +104,10 @@ func (ss *SessionStore) NewSession(conn interface{}, sid string) (*Session, int)
 		}
 	}
 
+	numSessions := len(ss.sessCache)
+	statsSet("LiveSessions", int64(numSessions))
+	statsInc("TotalSessions", 1)
+
 	ss.lock.Unlock()
 
 	// Deleting long polling sessions.
@@ -111,10 +117,7 @@ func (ss *SessionStore) NewSession(conn interface{}, sid string) (*Session, int)
 		sess.cleanUp(true)
 	}
 
-	statsSet("LiveSessions", int64(len(ss.sessCache)))
-	statsInc("TotalSessions", 1)
-
-	return &s, len(ss.sessCache)
+	return &s, numSessions
 }
 
 // Get fetches a session from store by session ID.
@@ -156,13 +159,14 @@ func (ss *SessionStore) Shutdown() {
 	shutdown := NoErrShutdown(types.TimeNow())
 	for _, s := range ss.sessCache {
 		if !s.isMultiplex() {
-			s.stop <- s.serialize(shutdown)
+			_, data := s.serialize(shutdown)
+			s.stopSession(data)
 		}
 	}
 
 	// TODO: Consider broadcasting shutdown to other cluster nodes.
 
-	log.Println("SessionStore shut down, sessions terminated:", len(ss.sessCache))
+	logs.Info.Println("SessionStore shut down, sessions terminated:", len(ss.sessCache))
 }
 
 // EvictUser terminates all sessions of a given user.
@@ -175,7 +179,8 @@ func (ss *SessionStore) EvictUser(uid types.Uid, skipSid string) {
 	evicted.AsUser = uid.UserId()
 	for _, s := range ss.sessCache {
 		if s.uid == uid && !s.isMultiplex() && s.sid != skipSid {
-			s.stop <- s.serialize(evicted)
+			_, data := s.serialize(evicted)
+			s.stopSession(data)
 			delete(ss.sessCache, s.sid)
 			if s.proto == LPOLL {
 				ss.lru.Remove(s.lpTracker)
@@ -198,7 +203,7 @@ func (ss *SessionStore) NodeRestarted(nodeName string, fingerprint int64) {
 			continue
 		}
 		if s.clnode.fingerprint != fingerprint {
-			s.stop <- nil
+			s.stopSession(nil)
 			delete(ss.sessCache, s.sid)
 		}
 	}

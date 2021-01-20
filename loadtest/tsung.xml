@@ -2,7 +2,7 @@
 <!DOCTYPE tsung SYSTEM "/usr/local/share/tsung/tsung-1.0.dtd" []>
 <tsung loglevel="notice" version="1.0" dumptraffic="false">
   <clients>
-    <client host="localhost" use_controller_vm="true" maxusers="1000" />
+    <client host="localhost" use_controller_vm="true" maxusers="40000" />
   </clients>
 
   <servers>
@@ -10,8 +10,9 @@
   </servers>
 
   <load>
+
     <arrivalphase phase="1" duration="120" unit="second">
-      <users maxnumber="100" arrivalrate="1" unit="second" />
+      <users maxnumber="40000" arrivalrate="50" unit="second" />
     </arrivalphase>
   </load>
 
@@ -31,9 +32,49 @@
         <websocket type="message">{"hi":{"id":"%%_baseid%%01","ver":"0.15","ua":"Tsung-Loadtest/1.0; tsung/1.7.0"}}</websocket>
       </request>
 
-      <request subst="true">
-        <websocket type="message">{"login":{"id":"%%_baseid%%02","scheme":"basic","secret":"%%tinode:rand_user_secret%%"}}</websocket>
-      </request>
+      <!-- Randomly pick a user. -->
+      <setdynvars sourcetype="eval"
+        code='fun({Pid, DynVars}) ->
+                    tinode:rand_user_secret({Pid, DynVars})
+                  end.'>
+        <var name="secret" />
+      </setdynvars>
+
+      <!-- Read auth token from the cache. -->
+      <setdynvars sourcetype="eval"
+        code='fun({Pid, DynVars}) ->
+                    {ok, Secret} = ts_dynvars:lookup(secret, DynVars),
+                    tinode:read_token(Secret)
+                  end.'>
+        <var name="token" />
+      </setdynvars>
+
+      <!-- Token present. Authenticate with it. -->
+      <if var="token" neq="">
+        <request subst="true">
+          <match do="abort" when="nomatch">{"ctrl":.*"code":200.*}</match>
+          <websocket type="message">{"login":{"id":"%%_baseid%%02","scheme":"token","secret":"%%_token%%"}}</websocket>
+        </request>
+      </if>
+
+      <!-- else log in with user name and password. -->
+      <if var="token" eq="">
+        <request subst="true">
+          <match do="abort" when="nomatch">{"ctrl":.*"code":200.*}</match>
+          <dyn_variable name="token" re='^{"ctrl":.*"token":"([-A-Za-z0-9+\/=]+={0,3})".*}$'/>
+          <websocket type="message">{"login":{"id":"%%_baseid%%02","scheme":"basic","secret":"%%_secret%%"}}</websocket>
+        </request>
+
+        <!-- Save token in the cache. -->
+        <setdynvars sourcetype="eval"
+          code='fun({_, DynVars}) ->
+                      {ok, Token} = ts_dynvars:lookup(token, DynVars),
+                      {ok, Secret} = ts_dynvars:lookup(secret, DynVars),
+                      tinode:cache_token(Secret, Token)
+                    end.'>
+          <var name="dummy" />
+        </setdynvars>
+      </if>
 
       <request subst="true">
         <websocket type="message" frame="text">{"sub":{"id":"%%_baseid%%03","topic":"me","get":{"what":"desc"}}}</websocket>
@@ -51,24 +92,33 @@
         <dyn_variable name="subs" jsonpath="meta.sub[*].topic"/>
         <websocket type="message" frame="text">{"get":{"id":"%%_baseid%%04","topic":"me","what":"sub"}}</websocket>
       </request>
+      <setdynvars sourcetype="eval"
+            code="fun({Pid,DynVars})->
+                      {ok,Subs}=ts_dynvars:lookup(subs,DynVars),
+                      tinode:shuffle(Subs) end.">
+        <var name="shuffled_subs" />
+      </setdynvars>
 
       <!-- main loop -->
       <for from="1" to="100" incr="1" var="ctr">
         <!-- Iterate over subscriptions -->
-        <foreach name="topicx" in="subs">
-          <thinktime value="3" random="true"></thinktime>
+        <foreach name="topicx" in="shuffled_subs">
+          <thinktime value="1" random="true"></thinktime>
 
           <request subst="true">
+            <dyn_variable name="code" jsonpath="ctrl.code"/>
             <websocket type="message" frame="text">{"sub":{"id":"%%_baseid%%%%_topicx%%%%_ctr%%","topic":"%%_topicx%%","get":{"what":"desc sub data del"}}}</websocket>
           </request>
 
-          <for from="1" to="50" incr="1" var="counter">
-            <thinktime min="2" max="10" random="true"></thinktime>
+          <if var="code" eq="200">
+            <for from="1" to="50" incr="1" var="counter">
+              <thinktime min="2" max="10" random="true"></thinktime>
 
-            <request subst="true">
-              <websocket type="message" frame="text">{"pub":{"id":"%%_baseid%%%%_topicx%%%%_ctr%%%%_counter%%","topic":"%%_topicx%%","content":"This is a Tsung test %%_baseid%% %%_counter%%"}}</websocket>
-            </request>
-          </for>
+              <request subst="true">
+                <websocket type="message" frame="text">{"pub":{"id":"%%_baseid%%%%_topicx%%%%_ctr%%%%_counter%%","topic":"%%_topicx%%","content":"This is a Tsung test %%_baseid%% %%_counter%%"}}</websocket>
+              </request>
+            </for>
+          </if>
 
           <request subst="true">
             <websocket type="message" frame="text">{"leave":{"id":"%%_baseid%%%%_topicx%%%%_ctr%%","topic":"%%_topicx%%"}}</websocket>

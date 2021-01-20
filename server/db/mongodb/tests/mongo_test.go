@@ -27,9 +27,8 @@ import (
 	mdb "go.mongodb.org/mongo-driver/mongo"
 	mdbopts "go.mongodb.org/mongo-driver/mongo/options"
 
-	//backend "github.com/jetri/chat/server/db/rethinkdb"
-	//backend "github.com/jetri/chat/server/db/mysql"
 	backend "github.com/jetri/chat/server/db/mongodb"
+	"github.com/jetri/chat/server/logs"
 	"github.com/jetri/chat/server/store/types"
 )
 
@@ -1223,6 +1222,7 @@ func initConnectionToDb() {
 }
 
 func init() {
+	logs.Init()
 	adp = backend.GetAdapter()
 	conffile := flag.String("config", "./test.conf", "config of the database connection")
 
