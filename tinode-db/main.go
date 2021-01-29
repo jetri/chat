@@ -222,6 +222,14 @@ func main() {
 	}
 
 	err := store.Open(1, config.StoreConfig)
+	log.Println(string(config.StoreConfig))
+	// out, err := json.Marshal(config)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// log.Println(string(out))
+
 	/* log.Println("Opening store")
 	log.Println(string(config.StoreConfig))
 
