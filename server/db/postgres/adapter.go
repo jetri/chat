@@ -203,7 +203,7 @@ func (a *adapter) CreateDb(reset bool) error {
 	cfg, _ := pgx.ParseConfig(a.dsn)
 	connString := fmt.Sprintf("host=%s user=%s password=%s sslmode=disable dbname=postgres", cfg.Host, cfg.User, cfg.Password)
 
-	log.Println("connection String: " + connString)
+	log.Println("connection string: " + connString)
 
 	a.db, err = sqlx.Open("pgx", connString)
 	if err != nil {
@@ -219,6 +219,7 @@ func (a *adapter) CreateDb(reset bool) error {
 	}
 	a.db.Close()
 
+	log.Println("connection string: " + cfg.ConnString())
 	a.db, err = sqlx.Open("pgx", cfg.ConnString())
 	if err != nil {
 		return err
