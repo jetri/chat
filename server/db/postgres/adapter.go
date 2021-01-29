@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -201,6 +202,8 @@ func (a *adapter) CreateDb(reset bool) error {
 
 	cfg, _ := pgx.ParseConfig(a.dsn)
 	connString := fmt.Sprintf("host=%s user=%s password=%s sslmode=disable", cfg.Host, cfg.User, cfg.Password)
+
+	log.Println("connection String: " + connString)
 
 	a.db, err = sqlx.Open("pgx", connString)
 	if err != nil {

@@ -273,7 +273,7 @@ func main() {
 			log.Println("Database successfully upgraded.")
 		}
 	} else {
-		// Reset or create DB
+		log.Println("Reset or create DB")
 		err = store.InitDb(config.StoreConfig, true)
 		if err == nil {
 			var action string
