@@ -201,7 +201,7 @@ func (a *adapter) CreateDb(reset bool) error {
 	// a.db, err = sqlx.Open("postgres", cfg.FormatDSN())
 
 	cfg, _ := pgx.ParseConfig(a.dsn)
-	connString := fmt.Sprintf("host=%s user=%s password=%s sslmode=disable", cfg.Host, cfg.User, cfg.Password)
+	connString := fmt.Sprintf("host=%s user=%s password=%s sslmode=disable dbname=postgres", cfg.Host, cfg.User, cfg.Password)
 
 	log.Println("connection String: " + connString)
 
